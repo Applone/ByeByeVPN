@@ -72,7 +72,7 @@ jobs:
           copy build\${{ steps.build_type.outputs.type }}\byebyevpn.exe staging\
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@604373da71285e27a5007949a10b7ef600173033 # v4.6.1
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: byebyevpn-${{ matrix.os }}
           path: staging/*
