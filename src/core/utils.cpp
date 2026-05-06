@@ -25,7 +25,7 @@ bool g_use_ip_api = false;
 bool   g_save_requested = false;
 FILE*  g_save_fp = nullptr;
 string g_save_path;
-string g_observer_cc = "RU";
+string g_observer_cc;
 
 PortMode    g_port_mode = PortMode::FULL;
 int         g_range_lo  = 1;
@@ -148,6 +148,22 @@ string hex_s(const unsigned char* d, size_t n, bool spaces) {
         if (spaces && i+1<n) s += ' ';
     }
     return s;
+}
+
+string url_encode(const string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    string out;
+    out.reserve(s.size() * 3);
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back((char)c);
+        } else {
+            out.push_back('%');
+            out.push_back(hex[(c >> 4) & 0x0F]);
+            out.push_back(hex[c & 0x0F]);
+        }
+    }
+    return out;
 }
 
 namespace JSON {

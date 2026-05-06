@@ -13,7 +13,11 @@ UdpResult hysteria2_probe(const std::string& host, int port) {
         0,0,0,0,0,0,0,0,             
         0x00, 0x00, 0x44,0x40
     };
-    RAND_bytes(pkt + 6, 8);          
+    if (RAND_bytes(pkt + 6, 8) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     std::vector<unsigned char> full(1200, 0x00);
     memcpy(full.data(), pkt, sizeof(pkt));
     return udp_probe(host, port, full.data(), (int)full.size(), 1500);
@@ -37,8 +41,20 @@ UdpResult l2tp_probe(const std::string& host, int port) {
         0x80,0x0B, 0x00,0x00, 0x00,0x07, 'l','a','c',
         0x80,0x08, 0x00,0x00, 0x00,0x09, 0,0
     };
-    unsigned char tid[2];
-    do { RAND_bytes(tid, 2); } while (tid[0] == 0 && tid[1] == 0);
+    unsigned char tid[2] = {0, 0};
+    bool have_tid = false;
+    for (int tries = 0; tries < 4; ++tries) {
+        if (RAND_bytes(tid, 2) != 1) continue;
+        if (tid[0] != 0 || tid[1] != 0) {
+            have_tid = true;
+            break;
+        }
+    }
+    if (!have_tid) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     pkt[sizeof(pkt)-2] = tid[0];
     pkt[sizeof(pkt)-1] = tid[1];
     return udp_probe(host, port, pkt, sizeof(pkt), 1500);
@@ -46,9 +62,17 @@ UdpResult l2tp_probe(const std::string& host, int port) {
 
 UdpResult amneziawg_probe(const std::string& host, int port) {
     unsigned char pkt[148 + 8] = {0};
-    RAND_bytes(pkt, 8);              
+    if (RAND_bytes(pkt, 8) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     pkt[8] = 0x01;                   
-    RAND_bytes(pkt + 12, 140);       
+    if (RAND_bytes(pkt + 12, 140) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     return udp_probe(host, port, pkt, sizeof(pkt), 1500);
 }
 
@@ -66,8 +90,14 @@ FpResult sstp_probe(const std::string& host, int port) {
     if (!raw_ssl) { closesocket(s); return f; }
     std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
     
-    SSL_set_fd(ssl.get(), (int)s);
-    SSL_set_tlsext_host_name(ssl.get(), host.c_str());
+    if (SSL_set_fd(ssl.get(), (int)s) != 1) {
+        closesocket(s);
+        f.details = "SSL_set_fd failed"; f.silent = true; return f;
+    }
+    if (SSL_set_tlsext_host_name(ssl.get(), host.c_str()) != 1) {
+        closesocket(s);
+        f.details = "SSL_set_tlsext_host_name failed"; f.silent = true; return f;
+    }
     if (SSL_connect(ssl.get()) != 1) {
         closesocket(s);
         f.details = "TLS handshake failed (not HTTPS)"; f.silent = true; return f;

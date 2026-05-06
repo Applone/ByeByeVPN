@@ -61,6 +61,7 @@ bool starts_with(const string& s, const string& p);
 string trim(const string& s);
 vector<string> split(const string& s, char sep);
 string hex_s(const unsigned char* d, size_t n, bool spaces = false);
+string url_encode(const string& s);
 
 string json_get_str(const string& body, const string& key);
 

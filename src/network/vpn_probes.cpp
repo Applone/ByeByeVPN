@@ -16,7 +16,11 @@ UdpResult quic_probe(const std::string& host, int port) {
         0x00,                        
         0x44,0x40,                   
     };
-    RAND_bytes(pkt + 6, 8);          
+    if (RAND_bytes(pkt + 6, 8) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     std::vector<unsigned char> full(1200, 0x00);
     memcpy(full.data(), pkt, sizeof(pkt));
     return udp_probe(host, port, full.data(), (int)full.size(), 1500);
@@ -44,13 +48,21 @@ UdpResult openvpn_probe(const std::string& host, int port) {
 UdpResult wireguard_probe(const std::string& host, int port) {
     unsigned char pkt[148] = {0};
     pkt[0] = 0x01;   
-    RAND_bytes(pkt+4, 140); 
+    if (RAND_bytes(pkt+4, 140) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     return udp_probe(host, port, pkt, sizeof(pkt), 1500);
 }
 
 UdpResult ike_probe(const std::string& host, int port) {
     unsigned char pkt[28] = {0};
-    RAND_bytes(pkt, 8);       
+    if (RAND_bytes(pkt, 8) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     pkt[16] = 0x21;           
     pkt[17] = 0x20;           
     pkt[18] = 0x22;           
@@ -65,6 +77,10 @@ UdpResult dns_probe(const std::string& host, int port) {
         0x07,'e','x','a','m','p','l','e', 0x03,'c','o','m', 0x00,
         0x00,0x01, 0x00,0x01
     };
-    RAND_bytes(q, 2);   
+    if (RAND_bytes(q, 2) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     return udp_probe(host, port, q, sizeof(q), 1200);
 }

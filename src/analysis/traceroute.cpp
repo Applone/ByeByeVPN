@@ -92,9 +92,11 @@ TraceResult trace_hops(const std::string& target_ip, int max_hops) {
     if (dst.s_addr == 0) return r;
 
     int s = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    bool used_dgram = false;
     if (s < 0) {
         s = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
         if (s < 0) return r;
+        used_dgram = true;
     }
 
     struct timeval tv;
@@ -135,6 +137,14 @@ TraceResult trace_hops(const std::string& target_ip, int max_hops) {
 
         auto t0 = std::chrono::steady_clock::now();
         sendto(s, &icmp_pkt, sizeof(icmp_pkt), 0, (struct sockaddr*)&saddr, sizeof(saddr));
+        uint16_t expected_id = id;
+        if (used_dgram) {
+            struct sockaddr_in local{};
+            socklen_t llen = sizeof(local);
+            if (getsockname(s, (struct sockaddr*)&local, &llen) == 0) {
+                expected_id = ntohs(local.sin_port);
+            }
+        }
 
         TraceHop hop; hop.ttl = ttl;
         char buf[512];
@@ -151,25 +161,28 @@ TraceResult trace_hops(const std::string& target_ip, int max_hops) {
                 char abuf[INET_ADDRSTRLEN]={0};
                 inet_ntop(AF_INET, &raddr.sin_addr, abuf, sizeof(abuf));
                 hop.addr = abuf;
-                
-                int iphdr_len = (buf[0] & 0x0f) * 4;
-                if (n >= iphdr_len + 8) {
-                    uint8_t type = buf[iphdr_len];
+
+                int iphdr_len = used_dgram ? 0 : ((buf[0] & 0x0f) * 4);
+                int outer_off = iphdr_len;
+                if (n >= outer_off + 8) {
+                    uint8_t type = (uint8_t)buf[outer_off];
                     if (type == 0) {
-                        uint16_t rid = ntohs(*(uint16_t*)(buf + iphdr_len + 4));
-                        uint16_t rseq = ntohs(*(uint16_t*)(buf + iphdr_len + 6));
-                        if (rid == id && rseq == (uint16_t)(seq - 1)) {
+                        uint16_t rid = ntohs(*(uint16_t*)(buf + outer_off + 4));
+                        uint16_t rseq = ntohs(*(uint16_t*)(buf + outer_off + 6));
+                        if (rid == expected_id && rseq == (uint16_t)(seq - 1)) {
                             got_reply = true;
                             r.reached_target = true;
                             break;
                         }
                     } else if (type == 11) {
-                        if (n >= iphdr_len + 8 + 20 + 8) {
-                            int inner_iphdr_len = (buf[iphdr_len + 8] & 0x0f) * 4;
-                            if (n >= iphdr_len + 8 + inner_iphdr_len + 8) {
-                                uint16_t rid = ntohs(*(uint16_t*)(buf + iphdr_len + 8 + inner_iphdr_len + 4));
-                                uint16_t rseq = ntohs(*(uint16_t*)(buf + iphdr_len + 8 + inner_iphdr_len + 6));
-                                if (rid == id && rseq == (uint16_t)(seq - 1)) {
+                        int inner_ip_off = outer_off + 8;
+                        if (n >= inner_ip_off + 20 + 8) {
+                            int inner_iphdr_len = (buf[inner_ip_off] & 0x0f) * 4;
+                            if (n >= inner_ip_off + inner_iphdr_len + 8) {
+                                int inner_icmp_off = inner_ip_off + inner_iphdr_len;
+                                uint16_t rid = ntohs(*(uint16_t*)(buf + inner_icmp_off + 4));
+                                uint16_t rseq = ntohs(*(uint16_t*)(buf + inner_icmp_off + 6));
+                                if (rid == expected_id && rseq == (uint16_t)(seq - 1)) {
                                     got_reply = true;
                                     break;
                                 }

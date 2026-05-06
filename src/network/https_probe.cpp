@@ -2,13 +2,43 @@
 #include <memory>
 #include "tcp_scanner.h"
 #include "../core/utils.h"
+#include <openssl/err.h>
 #include <openssl/ssl.h>
+
+static void set_socket_timeouts(SOCKET s, int to_ms) {
+#ifdef _WIN32
+    DWORD to = (DWORD)to_ms;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof(to));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&to, sizeof(to));
+#else
+    struct timeval tv{};
+    tv.tv_sec = to_ms / 1000;
+    tv.tv_usec = (to_ms % 1000) * 1000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#endif
+}
+
+static std::string ssl_error_message(SSL* ssl, int rc, const char* op) {
+    int ssl_err = SSL_get_error(ssl, rc);
+    unsigned long ossl = ERR_get_error();
+    char buf[256] = {0};
+    if (ossl) ERR_error_string_n(ossl, buf, sizeof(buf));
+    std::string msg = op;
+    msg += " err=" + std::to_string(ssl_err);
+    if (buf[0]) {
+        msg += " ";
+        msg += buf;
+    }
+    return msg;
+}
 
 HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_hdr, int to_ms) {
     HttpsProbe r;
     std::string err;
     SOCKET s = tcp_connect(ip, port, to_ms, err);
     if (s == INVALID_SOCKET) { r.err = err; return r; }
+    set_socket_timeouts(s, to_ms);
 
     SSL_CTX* raw_ctx = SSL_CTX_new(TLS_client_method());
     if (!raw_ctx) { r.err = "ssl_ctx_new"; closesocket(s); return r; }
@@ -19,13 +49,22 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
     SSL* raw_ssl = SSL_new(ctx.get());
     if (!raw_ssl) { r.err = "ssl_new"; closesocket(s); return r; }
     std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
-    SSL_set_fd(ssl.get(), (int)s);
-    if (!host_hdr.empty()) SSL_set_tlsext_host_name(ssl.get(), host_hdr.c_str());
+    if (SSL_set_fd(ssl.get(), (int)s) != 1) {
+        r.err = "ssl_set_fd";
+        closesocket(s);
+        return r;
+    }
+    if (!host_hdr.empty() && SSL_set_tlsext_host_name(ssl.get(), host_hdr.c_str()) != 1) {
+        r.err = "ssl_set_sni";
+        closesocket(s);
+        return r;
+    }
     
     static const unsigned char alpn_h11[] = {8,'h','t','t','p','/','1','.','1'};
     SSL_set_alpn_protos(ssl.get(), alpn_h11, sizeof(alpn_h11));
-    if (SSL_connect(ssl.get()) != 1) {
-        r.err = "tls handshake failed";
+    int rc = SSL_connect(ssl.get());
+    if (rc != 1) {
+        r.err = ssl_error_message(ssl.get(), rc, "ssl_connect");
         closesocket(s);
         return r;
     }
@@ -33,12 +72,28 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
     std::string req = "GET / HTTP/1.1\r\nHost: " + (host_hdr.empty() ? ip : host_hdr) + "\r\n"
                  "Accept: */*\r\n"
                  "Connection: close\r\n\r\n";
-    SSL_write(ssl.get(), req.data(), (int)req.size());
+    int wrote = SSL_write(ssl.get(), req.data(), (int)req.size());
+    if (wrote <= 0) {
+        r.err = ssl_error_message(ssl.get(), wrote, "ssl_write");
+        closesocket(s);
+        return r;
+    }
+    if (wrote != (int)req.size()) {
+        r.err = "ssl_write partial";
+        closesocket(s);
+        return r;
+    }
     std::string body;
     char buf[1024];
     for (int i=0; i<6; ++i) {
         int n = SSL_read(ssl.get(), buf, sizeof(buf));
-        if (n <= 0) break;
+        if (n <= 0) {
+            int ssl_err = SSL_get_error(ssl.get(), n);
+            if (ssl_err == SSL_ERROR_ZERO_RETURN) break;
+            if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) continue;
+            r.err = ssl_error_message(ssl.get(), n, "ssl_read");
+            break;
+        }
         body.append(buf, n);
         if (body.size() >= 4096) break;
     }
@@ -76,17 +131,15 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
     } else {
         r.no_server_hdr = (r.status_code > 0);
     }
+    std::string lower_body = tolower_s(body);
     auto get_hdr = [&](const char* key) -> std::string {
-        std::string lk = std::string("\n") + key;
-        std::string lkl = lk;
-        for (auto& c: lkl) c = (char)std::tolower((unsigned char)c);
-        std::string bl = body;
-        std::string bll = body;
-        for (auto& c: bll) c = (char)std::tolower((unsigned char)c);
-        size_t p = bll.find(lkl);
+        std::string lkl = tolower_s(key);
+        std::string start_key = lkl + ":";
+        std::string line_key = "\n" + lkl + ":";
+        size_t p = lower_body.rfind(start_key, 0) == 0 ? 0 : lower_body.find(line_key);
         if (p == std::string::npos) return {};
-        size_t eol = body.find('\n', p + 1);
-        size_t colon = body.find(':', p + 1);
+        size_t colon = body.find(':', p);
+        size_t eol = body.find('\n', colon == std::string::npos ? p : colon + 1);
         if (colon == std::string::npos || (eol != std::string::npos && colon > eol)) return {};
         std::string val = body.substr(colon + 1, (eol == std::string::npos ? body.size() : eol) - (colon + 1));
         return trim(val);

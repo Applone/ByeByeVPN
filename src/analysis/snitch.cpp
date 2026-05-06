@@ -111,6 +111,7 @@ static double country_max_rtt_ms(const std::string& cc) {
 
 SnitchResult snitch_check(const std::string& target_ip, int target_port, const std::string& target_cc, const std::string& observer_cc) {
     SnitchResult r; r.country_code = target_cc;
+    (void)observer_cc;
     const int samples = 6;
 
     auto anchor_job = [&](std::string ip, int port) {
@@ -151,15 +152,12 @@ SnitchResult snitch_check(const std::string& target_ip, int target_port, const s
     r.google_median_ms = f_goog.get();
     r.yandex_median_ms = f_yan.get();
 
-    double emin = 0, emax = 0;
-    if (!observer_cc.empty()) {
-        emin = country_min_rtt_ms(target_cc);
-        emax = country_max_rtt_ms(target_cc);
-        r.expected_min_ms = emin;
-        if (emin > 0) {
-            if (r.median_ms < emin * 0.5) r.too_low  = true;
-            if (r.median_ms > emax * 3.0) r.too_high = true;
-        }
+    double emin = country_min_rtt_ms(target_cc);
+    double emax = country_max_rtt_ms(target_cc);
+    r.expected_min_ms = emin;
+    if (emin > 0) {
+        if (r.median_ms < emin * 0.5) r.too_low  = true;
+        if (r.median_ms > emax * 3.0) r.too_high = true;
     }
     if (r.stddev_ms > 40.0) r.high_jitter = true;
 

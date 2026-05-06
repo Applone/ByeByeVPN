@@ -149,7 +149,7 @@ GeoInfo geo_freeipapi(const std::string& ip) {
 
 GeoInfo geo_2ip_ru(const std::string& ip) {
     GeoInfo g; g.source = "2ip.me (RU)";
-    std::string url = "https://api.2ip.me/geo.json?ip=" + ip;
+    std::string url = "https://api.2ip.me/geo.json?ip=" + url_encode(ip);
     auto r = http_get(url);
     if (!r.ok()) { g.err = "http " + std::to_string(r.status) + " " + r.err; return g; }
     g.ip           = json_get_str(r.body, "ip");

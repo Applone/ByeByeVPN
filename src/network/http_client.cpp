@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <stdexcept>
 
 static bool parse_http_port(const std::string& text, int& port) {
     if (text.empty()) return false;
@@ -21,6 +22,20 @@ static bool parse_http_port(const std::string& text, int& port) {
     if (errno != 0 || end == text.c_str() || *end != '\0' || v < 1 || v > 65535) return false;
     port = (int)v;
     return true;
+}
+
+static std::string ssl_error_message(SSL* ssl, int rc, const char* op) {
+    int ssl_err = SSL_get_error(ssl, rc);
+    unsigned long ossl = ERR_get_error();
+    char buf[256] = {0};
+    if (ossl) ERR_error_string_n(ossl, buf, sizeof(buf));
+    std::string msg = op;
+    msg += " err=" + std::to_string(ssl_err);
+    if (buf[0]) {
+        msg += " ";
+        msg += buf;
+    }
+    return msg;
 }
 
 HttpResp http_get(const std::string& url, int timeout_ms) {
@@ -140,9 +155,24 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
                       "\r\n";
 
     if (is_https) {
-        SSL_write(ssl.get(), req.data(), req.size());
+        int wrote = SSL_write(ssl.get(), req.data(), (int)req.size());
+        if (wrote <= 0) {
+            r.err = ssl_error_message(ssl.get(), wrote, "ssl_write");
+            closesocket(s);
+            return r;
+        }
+        if (wrote != (int)req.size()) {
+            r.err = "ssl_write partial";
+            closesocket(s);
+            return r;
+        }
     } else {
-        tcp_send_all(s, req.data(), req.size());
+        int sent = tcp_send_all(s, req.data(), (int)req.size());
+        if (sent != (int)req.size()) {
+            r.err = "send " + std::to_string(WSAGetLastError());
+            closesocket(s);
+            return r;
+        }
     }
 
     std::string resp_data;
@@ -170,7 +200,13 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
         if (space1 != std::string::npos) {
             size_t space2 = headers.find(' ', space1 + 1);
             if (space2 != std::string::npos) {
-                r.status = std::stoi(headers.substr(space1 + 1, space2 - space1 - 1));
+                try {
+                    r.status = std::stoi(headers.substr(space1 + 1, space2 - space1 - 1));
+                } catch (const std::invalid_argument&) {
+                    r.status = 0;
+                } catch (const std::out_of_range&) {
+                    r.status = 0;
+                }
             }
         }
         

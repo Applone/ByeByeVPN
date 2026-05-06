@@ -23,7 +23,7 @@ struct SnitchResult {
     std::string  summary;
 };
 
-// Absolute RTT-vs-country checks only run when observer_cc is known.
+// observer_cc is reserved for future observer-specific calibration.
 SnitchResult snitch_check(const std::string& target_ip, int target_port, const std::string& target_cc, const std::string& observer_cc = "");
 
 #endif // ANALYSIS_SNITCH_H

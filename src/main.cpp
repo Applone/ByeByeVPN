@@ -94,6 +94,27 @@ void print_geo(const GeoInfo& g) {
     if (!flags.empty()) tee_printf("               flags: %s\n", flags.c_str());
 }
 
+static GeoInfo safe_get_geo(std::future<GeoInfo>& f, const std::string& source) {
+    try {
+        return f.get();
+    } catch (const std::exception& e) {
+        GeoInfo g; g.source = source; g.err = e.what(); return g;
+    } catch (...) {
+        GeoInfo g; g.source = source; g.err = "unknown exception"; return g;
+    }
+}
+
+static void clear_screen() {
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode))
+        SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+#endif
+    fputs("\x1b[2J\x1b[H", stdout);
+    fflush(stdout);
+}
+
 static void help() {
     tee_printf("ByeByeVPN — full TSPU/DPI/VPN detectability scanner\n\n");
     tee_printf("Usage:\n");
@@ -151,11 +172,7 @@ static string ask(const string& prompt) {
 
 static void interactive() {
     for (;;) {
-#ifdef _WIN32
-        system("cls");
-#else
-        system("clear");
-#endif
+        clear_screen();
         banner();
         tee_printf("  %s[1]%s  Full scan             — end-to-end scan of an IP/hostname\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[2]%s  TCP port scan         — TCP port-scan only\n", col(C::CYN), col(C::RST));
@@ -273,11 +290,17 @@ static void interactive() {
             auto f8 = std::async(std::launch::async, geo_ipwho_is,   t);
             auto f9 = std::async(std::launch::async, geo_ipinfo_io,  t);
             tee_printf("  %s-- EU --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(f1.get()); print_geo(f2.get()); print_geo(f3.get());
+            print_geo(safe_get_geo(f1, "ipapi.is"));
+            print_geo(safe_get_geo(f2, "iplocate.io"));
+            print_geo(safe_get_geo(f3, "freeipapi.com"));
             tee_printf("  %s-- RU --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(f4.get()); print_geo(f5.get()); print_geo(f6.get());
+            print_geo(safe_get_geo(f4, "2ip.ru"));
+            print_geo(safe_get_geo(f5, "ip-api.com/ru"));
+            print_geo(safe_get_geo(f6, "sypexgeo.net"));
             tee_printf("  %s-- global --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(f7.get()); print_geo(f8.get()); print_geo(f9.get());
+            print_geo(safe_get_geo(f7, "ip-api.com"));
+            print_geo(safe_get_geo(f8, "ipwho.is"));
+            print_geo(safe_get_geo(f9, "ipinfo.io"));
             pause_for_enter();
         } else if (c == '7') {
             run_local_analysis();
@@ -337,8 +360,10 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     WSADATA ws; WSAStartup(MAKEWORD(2,2), &ws);
 #endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_library_init(); SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
+#endif
 
     vector<string> pos;
     for (int i=1;i<argc;++i) {
@@ -376,6 +401,10 @@ int main(int argc, char** argv) {
             if (dash != string::npos) {
                 g_range_lo = parse_int_fatal(v.substr(0, dash).c_str(), "range start", 1, 65535);
                 g_range_hi = parse_int_fatal(v.substr(dash+1).c_str(), "range end", 1, 65535);
+                if (g_range_lo > g_range_hi) {
+                    fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
+                    exit(1);
+                }
                 g_port_mode = PortMode::RANGE;
             }
         }
@@ -504,11 +533,17 @@ int main(int argc, char** argv) {
             auto f8 = std::async(std::launch::async, geo_ipwho_is,   ip);
             auto f9 = std::async(std::launch::async, geo_ipinfo_io,  ip);
             tee_printf("  %s-- EU --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(f1.get()); print_geo(f2.get()); print_geo(f3.get());
+            print_geo(safe_get_geo(f1, "ipapi.is"));
+            print_geo(safe_get_geo(f2, "iplocate.io"));
+            print_geo(safe_get_geo(f3, "freeipapi.com"));
             tee_printf("  %s-- RU --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(f4.get()); print_geo(f5.get()); print_geo(f6.get());
+            print_geo(safe_get_geo(f4, "2ip.ru"));
+            print_geo(safe_get_geo(f5, "ip-api.com/ru"));
+            print_geo(safe_get_geo(f6, "sypexgeo.net"));
             tee_printf("  %s-- global --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(f7.get()); print_geo(f8.get()); print_geo(f9.get());
+            print_geo(safe_get_geo(f7, "ip-api.com"));
+            print_geo(safe_get_geo(f8, "ipwho.is"));
+            print_geo(safe_get_geo(f9, "ipinfo.io"));
         } else if (cmd == "local" || cmd == "me" || cmd == "self") {
             run_local_analysis();
         } else if (cmd == "snitch") {

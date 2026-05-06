@@ -20,6 +20,46 @@ static bool icontains(const std::string& hay, const char* needle) {
     return a.find(b) != std::string::npos;
 }
 
+static bool is_path_sep(char c) {
+#ifdef _WIN32
+    return c == '\\' || c == '/';
+#else
+    return c == '/';
+#endif
+}
+
+static bool path_char_eq(char a, char b) {
+    if (is_path_sep(a) && is_path_sep(b)) return true;
+#ifdef _WIN32
+    return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
+#else
+    return a == b;
+#endif
+}
+
+static bool path_prefix_match(const std::string& path, const std::string& base, size_t& prefix_len) {
+    size_t base_end = base.size();
+    while (base_end > 0 && is_path_sep(base[base_end - 1])) --base_end;
+    if (base_end == 0) return false;
+
+    size_t i = 0;
+    while (i < path.size() && i < base_end) {
+        if (!path_char_eq(path[i], base[i])) return false;
+        ++i;
+    }
+    if (i != base_end) return false;
+
+    prefix_len = i;
+    return prefix_len == path.size() || is_path_sep(path[prefix_len]);
+}
+
+static bool suffix_is_only_seps(const std::string& path, size_t pos) {
+    for (size_t i = pos; i < path.size(); ++i) {
+        if (!is_path_sep(path[i])) return false;
+    }
+    return true;
+}
+
 static std::string redact_path(const std::string& path) {
     if (path.empty()) return path;
 #ifdef _WIN32
@@ -30,7 +70,11 @@ static std::string redact_path(const std::string& path) {
     for (const char* e : envs) {
         const char* v = getenv(e);
         if (v && strlen(v) > 0) {
-            if (path.find(v) == 0) return "~" + path.substr(strlen(v));
+            size_t prefix_len = 0;
+            if (path_prefix_match(path, v, prefix_len)) {
+                if (prefix_len >= path.size() || suffix_is_only_seps(path, prefix_len)) return "~";
+                return "~" + path.substr(prefix_len);
+            }
         }
     }
     return path;
@@ -38,10 +82,16 @@ static std::string redact_path(const std::string& path) {
 
 #ifdef _WIN32
 static std::string mac_to_str(const unsigned char* mac, int len) {
-    char buf[64]; buf[0]=0;
-    for (int i=0;i<len;++i)
-        sprintf(buf+strlen(buf), "%02X%s", mac[i], i<len-1?":":"");
-    return buf;
+    std::string out;
+    if (!mac || len <= 0) return out;
+    out.reserve((size_t)len * 3 - 1);
+    for (int i = 0; i < len; ++i) {
+        char byte[4] = {0};
+        std::snprintf(byte, sizeof(byte), "%02X", mac[i]);
+        if (i > 0) out.push_back(':');
+        out.append(byte, 2);
+    }
+    return out;
 }
 
 static std::string sockaddr_to_str(SOCKADDR* sa) {
@@ -290,6 +340,8 @@ void run_local_analysis() {
     }
     std::sort(defaults_v4.begin(), defaults_v4.end(),
               [](auto* a, auto* b){return a->metric < b->metric;});
+    std::sort(defaults_v6.begin(), defaults_v6.end(),
+              [](auto* a, auto* b){return a->metric < b->metric;});
     for (auto* R: defaults_v4) {
         const char* c = R->via_vpn ? C::YEL : C::CYN;
         tee_printf("  %s0.0.0.0/0%s → %s  via %s%s%s%s  metric=%lu\n",
@@ -300,10 +352,23 @@ void run_local_analysis() {
                col(C::RST), R->metric);
     }
     if (defaults_v4.empty()) tee_printf("  %sno IPv4 default route%s\n", col(C::RED), col(C::RST));
+    for (auto* R: defaults_v6) {
+        const char* c = R->via_vpn ? C::YEL : C::CYN;
+        tee_printf("  %s::/0%s      → %s  via %s%s%s%s  metric=%lu\n",
+               col(c), col(C::RST), R->nexthop.c_str(),
+               col(C::BOLD),
+               R->via_adapter.empty()?"?":R->via_adapter.c_str(),
+               R->via_vpn?" [VPN]":"",
+               col(C::RST), R->metric);
+    }
+    if (defaults_v6.empty()) tee_printf("  %sno IPv6 default route%s\n", col(C::DIM), col(C::RST));
 
     tee_printf("\n%s[3/4] Tunneling mode%s\n", col(C::BOLD), col(C::RST));
     bool has_vpn_if   = vpn_up > 0;
-    bool default_via_vpn = !defaults_v4.empty() && defaults_v4.front()->via_vpn;
+    const LocalRoute* selected_vpn_default = nullptr;
+    if (!defaults_v4.empty() && defaults_v4.front()->via_vpn) selected_vpn_default = defaults_v4.front();
+    else if (!defaults_v6.empty() && defaults_v6.front()->via_vpn) selected_vpn_default = defaults_v6.front();
+    bool default_via_vpn = (selected_vpn_default != nullptr);
     bool has_vpn_specific_route = false;
     for (auto& R: routes) {
         if (R.via_vpn && R.prefix != "0.0.0.0/0" && R.prefix != "::/0"
@@ -315,7 +380,7 @@ void run_local_analysis() {
                col(C::YEL), col(C::RST));
     } else if (default_via_vpn && !has_vpn_specific_route) {
         tee_printf("  %s✓ FULL-TUNNEL%s — all traffic routed through VPN adapter \"%s\"\n",
-               col(C::GRN), col(C::RST), defaults_v4.front()->via_adapter.c_str());
+               col(C::GRN), col(C::RST), selected_vpn_default->via_adapter.c_str());
     } else if (default_via_vpn && has_vpn_specific_route) {
         tee_printf("  %s↯ FULL-TUNNEL + extra VPN-specific routes%s (likely VPN provider pushed split rules)\n",
                col(C::GRN), col(C::RST));
@@ -324,7 +389,8 @@ void run_local_analysis() {
                col(C::MAG), col(C::RST));
         int shown = 0;
         for (auto& R: routes) {
-            if (R.via_vpn && R.prefix != "0.0.0.0/0" && R.prefix.find("/32") == std::string::npos) {
+            if (R.via_vpn && R.prefix != "0.0.0.0/0" && R.prefix != "::/0" &&
+                R.prefix.find("/32") == std::string::npos && R.prefix.find("/128") == std::string::npos) {
                 tee_printf("         %s  →  %s%s%s\n",
                        R.prefix.c_str(), col(C::BOLD), R.via_adapter.c_str(), col(C::RST));
                 if (++shown >= 8) { tee_printf("         ... (more omitted)\n"); break; }

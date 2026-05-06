@@ -34,19 +34,28 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 #endif
 
-    int rc = sendto(s, (const char*)payload, plen, 0, chosen->ai_addr, (int)chosen->ai_addrlen);
+    int rc = connect(s, chosen->ai_addr, (int)chosen->ai_addrlen);
+    if (rc != 0) {
+        int saved_err = WSAGetLastError();
+        freeaddrinfo(ai);
+        closesocket(s);
+        r.err = "connect " + std::to_string(saved_err);
+        return r;
+    }
+    rc = send(s, (const char*)payload, plen, 0);
     freeaddrinfo(ai);
     if (rc <= 0) { closesocket(s); r.err = "send"; return r; }
     char buf[2048];
     int got = recv(s, buf, sizeof(buf), 0);
-    int saved_err = WSAGetLastError();
+    int saved_err = (got <= 0) ? WSAGetLastError() : 0;
     closesocket(s);
     r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now() - t0).count();
              
     int werr = saved_err;
 #ifndef _WIN32
-    if (werr == EAGAIN) werr = WSAETIMEDOUT;
+    if (werr == EAGAIN || werr == EWOULDBLOCK || werr == EINTR || werr == EINVAL) werr = WSAETIMEDOUT;
+    else if (werr == ECONNREFUSED) werr = WSAECONNRESET;
 #endif
 
     if (got > 0) {

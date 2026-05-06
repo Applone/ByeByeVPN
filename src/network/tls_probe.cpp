@@ -129,7 +129,7 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
         r.age_days  = asn1_time_diff_days_now(nb, true);
         r.days_left = asn1_time_diff_days_now(na, false);
         if (nb && na) {
-            int d=0, s=0; ASN1_TIME_diff(&d, &s, nb, na); r.total_validity_days = d;
+            int d = 0, secs = 0; ASN1_TIME_diff(&d, &secs, nb, na); r.total_validity_days = d;
         }
         std::unique_ptr<GENERAL_NAMES, decltype(&GENERAL_NAMES_free)> gens(
             (GENERAL_NAMES*)X509_get_ext_d2i(cert.get(), NID_subject_alt_name, nullptr, nullptr),
@@ -148,6 +148,8 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
                         r.san.push_back(std::move(name));
                     }
                     if (us) OPENSSL_free(us);
+                } else if (g->type == GEN_IPADD) {
+                    // IP SANs are intentionally ignored here; SNI consistency matches DNS names only.
                 }
             }
         }

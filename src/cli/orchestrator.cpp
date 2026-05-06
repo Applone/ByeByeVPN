@@ -146,7 +146,7 @@ FullReport run_full_target(const std::string& target) {
     }
 
     tee_printf("\n%s[4/8] UDP probes%s\n", col(C::BOLD), col(C::RST));
-    auto udp_show = [&](int port, const char* name, UdpResult u){
+    auto udp_show = [&](int port, const char* name, UdpResult u) -> UdpResult {
         const char* c = u.responded ? col(C::GRN) : col(C::DIM);
         tee_printf("  %sUDP:%-5d%s  %-18s  ",
                c, port, col(C::RST), name);
@@ -154,13 +154,13 @@ FullReport run_full_target(const std::string& target) {
         else             tee_printf("%sno answer (%s)%s", col(C::DIM), u.err.empty()?"closed/filtered":u.err.c_str(), col(C::RST));
         tee_printf("\n");
         R.udp_probes.push_back({port, u});
+        return u;
     };
     udp_show(53,    "DNS query",         dns_probe(R.dns.primary_ip, 53));
     udp_show(500,   "IKEv2 SA_INIT",     ike_probe(R.dns.primary_ip, 500));
     udp_show(4500,  "IKEv2 NAT-T",       ike_probe(R.dns.primary_ip, 4500));
     udp_show(1194,  "OpenVPN HARD_RESET",openvpn_probe(R.dns.primary_ip, 1194));
-    udp_show(443,   "QUIC v1 Initial",   quic_probe(R.dns.primary_ip, 443));
-    R.quic = R.udp_probes.back().second;
+    R.quic = udp_show(443, "QUIC v1 Initial", quic_probe(R.dns.primary_ip, 443));
     udp_show(51820, "WireGuard handshake", wireguard_probe(R.dns.primary_ip, 51820));
     udp_show(41641, "Tailscale handshake", wireguard_probe(R.dns.primary_ip, 41641));
     
@@ -892,14 +892,14 @@ FullReport run_full_target(const std::string& target) {
         j3_silent_total += sil;
         j3_resp_total   += rsp;
 
-        bool is_tls_port        = (pf.tls && pf.tls->ok);
+        bool port_has_tls       = (pf.tls && pf.tls->ok);
         bool https_probe_anomaly =
             (pf.https && pf.https->tls_ok &&
              (!pf.https->responded ||
               pf.https->version_anomaly ||
               (pf.https->responded && pf.https->server_hdr.empty())));
         bool canned_real = (pf.j3a && pf.j3a->canned_identical >= 2) &&
-                           (!is_tls_port || https_probe_anomaly);
+                           (!port_has_tls || https_probe_anomaly);
         if (canned_real) {
             ++j3_canned_ports;
             flag_major("port :" + std::to_string(pf.port) +
@@ -908,7 +908,7 @@ FullReport run_full_target(const std::string& target) {
                        "' with identical byte count " + std::to_string(pf.j3a->canned_bytes) +
                        "B for " + std::to_string(pf.j3a->canned_identical) +
                        " different probes" +
-                       (is_tls_port ? " AND the HTTP-over-TLS probe is also anomalous" : "") +
+                       (port_has_tls ? " AND the HTTP-over-TLS probe is also anomalous" : "") +
                        ") — real web servers vary their replies; this is the Xray/Trojan `fallback+redirect` signature",
                        18);
         }
@@ -1301,7 +1301,6 @@ FullReport run_full_target(const std::string& target) {
                  "no panel-preset TLS ports among open set");
     }
     {
-        int worst = std::max({j3_canned_ports, j3_badver_ports, j3_raw_nonhttp_ports});
         if (j3_canned_ports >= 1 || j3_badver_ports >= 1)
             axis("J3 canned/anomaly aggregate", "HIGH",
                  std::to_string(j3_canned_ports) + " canned / " +
@@ -1314,7 +1313,6 @@ FullReport run_full_target(const std::string& target) {
             axis("J3 canned/anomaly aggregate", "LOW", "no canned / bad-version / raw-non-HTTP replies");
         else
             axis("J3 canned/anomaly aggregate", "NONE", "no J3 probes ran");
-        (void)worst;
     }
 
     tee_printf("\n  %sStrong signals (%zu)%s  [%s!%s = real evidence of VPN/proxy]\n",
