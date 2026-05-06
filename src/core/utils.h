@@ -5,6 +5,7 @@
 #include <set>
 #include <map>
 #include <chrono>
+#include <cstdio>
 
 using std::string;
 using std::vector;
@@ -21,10 +22,12 @@ extern bool g_stealth;
 extern bool g_no_geoip;
 extern bool g_no_ct;
 extern bool g_udp_jitter;
+extern bool g_use_ip_api;
 
 extern bool   g_save_requested;
 extern FILE*  g_save_fp;
 extern string g_save_path;
+extern string g_observer_cc;
 
 enum class PortMode { FULL, FAST, RANGE, LIST };
 extern PortMode    g_port_mode;
@@ -48,8 +51,6 @@ const char* col(const char* c);
 
 int tee_printf(const char* fmt, ...);
 int tee_puts(const char* s);
-#define printf tee_printf
-#define puts   tee_puts
 
 void enable_vt();
 void banner();

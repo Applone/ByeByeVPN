@@ -155,10 +155,26 @@ TraceResult trace_hops(const std::string& target_ip, int max_hops) {
                 int iphdr_len = (buf[0] & 0x0f) * 4;
                 if (n >= iphdr_len + 8) {
                     uint8_t type = buf[iphdr_len];
-                    if (type == 11 || type == 0) {
-                        got_reply = true;
-                        if (type == 0) r.reached_target = true;
-                        break;
+                    if (type == 0) {
+                        uint16_t rid = ntohs(*(uint16_t*)(buf + iphdr_len + 4));
+                        uint16_t rseq = ntohs(*(uint16_t*)(buf + iphdr_len + 6));
+                        if (rid == id && rseq == (uint16_t)(seq - 1)) {
+                            got_reply = true;
+                            r.reached_target = true;
+                            break;
+                        }
+                    } else if (type == 11) {
+                        if (n >= iphdr_len + 8 + 20 + 8) {
+                            int inner_iphdr_len = (buf[iphdr_len + 8] & 0x0f) * 4;
+                            if (n >= iphdr_len + 8 + inner_iphdr_len + 8) {
+                                uint16_t rid = ntohs(*(uint16_t*)(buf + iphdr_len + 8 + inner_iphdr_len + 4));
+                                uint16_t rseq = ntohs(*(uint16_t*)(buf + iphdr_len + 8 + inner_iphdr_len + 6));
+                                if (rid == id && rseq == (uint16_t)(seq - 1)) {
+                                    got_reply = true;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             }

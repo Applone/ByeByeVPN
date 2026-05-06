@@ -52,9 +52,20 @@ FullReport run_full_target(const std::string& target) {
         auto fg_gl1 = std::async(std::launch::async, geo_ip_api_com, R.dns.primary_ip);
         auto fg_gl2 = std::async(std::launch::async, geo_ipwho_is,   R.dns.primary_ip);
         auto fg_gl3 = std::async(std::launch::async, geo_ipinfo_io,  R.dns.primary_ip);
-        R.geos.push_back(fg_eu1.get()); R.geos.push_back(fg_eu2.get()); R.geos.push_back(fg_eu3.get());
-        R.geos.push_back(fg_ru1.get()); R.geos.push_back(fg_ru2.get()); R.geos.push_back(fg_ru3.get());
-        R.geos.push_back(fg_gl1.get()); R.geos.push_back(fg_gl2.get()); R.geos.push_back(fg_gl3.get());
+        auto get_geo = [](std::future<GeoInfo>& f, const char* name) {
+            try { return f.get(); }
+            catch (const std::exception& e) { GeoInfo g; g.source = name; g.err = e.what(); return g; }
+            catch (...) { GeoInfo g; g.source = name; g.err = "unknown exception"; return g; }
+        };
+        R.geos.push_back(get_geo(fg_eu1, "ipapi.is"));
+        R.geos.push_back(get_geo(fg_eu2, "iplocate.io"));
+        R.geos.push_back(get_geo(fg_eu3, "freeipapi.com"));
+        R.geos.push_back(get_geo(fg_ru1, "2ip.ru"));
+        R.geos.push_back(get_geo(fg_ru2, "ip-api.com/ru"));
+        R.geos.push_back(get_geo(fg_ru3, "sypexgeo.net"));
+        R.geos.push_back(get_geo(fg_gl1, "ip-api.com"));
+        R.geos.push_back(get_geo(fg_gl2, "ipwho.is"));
+        R.geos.push_back(get_geo(fg_gl3, "ipinfo.io"));
         for (auto& g: R.geos) {
             if (!g.err.empty()) {
                 tee_printf("  %s%-12s%s %serr: %s%s\n",
@@ -236,9 +247,9 @@ FullReport run_full_target(const std::string& target) {
                         tee_printf("        %sCT-log (crt.sh): SKIPPED (--no-ct / --stealth)%s\n",
                                col(C::DIM), col(C::RST));
                     } else {
-                    CtCheck ct = ct_check(sc.base_sha);
-                    pf.ct = ct;
-                    if (ct.queried && !ct.err.empty()) {
+                        CtCheck ct = ct_check(sc.base_sha, true);
+                        pf.ct = ct;
+                        if (ct.queried && !ct.err.empty()) {
                         tee_printf("        %sCT-log (crt.sh): query failed — %s%s\n",
                                col(C::DIM), ct.err.c_str(), col(C::RST));
                     } else if (ct.queried && ct.found) {
@@ -422,7 +433,7 @@ FullReport run_full_target(const std::string& target) {
         for (auto& [cc, v]: votes)
             if (v > best) { best = v; consensus_cc = cc; }
     }
-    SnitchResult sn = snitch_check(R.dns.primary_ip, rtt_port, consensus_cc);
+    SnitchResult sn = snitch_check(R.dns.primary_ip, rtt_port, consensus_cc, g_observer_cc);
     R.snitch = sn;
     if (!sn.ok) {
         tee_printf("  %sSNITCH: %s%s\n", col(C::DIM), sn.summary.c_str(), col(C::RST));
@@ -488,14 +499,20 @@ FullReport run_full_target(const std::string& target) {
 
     {
         Ja3Info j = our_openssl_ja3_signature();
-        tee_printf("  %sOur ClientHello JA3:%s %s%s%s  (OpenSSL 3.x default — real browsers use uTLS-Chrome)\n",
-               col(C::BOLD), col(C::RST),
-               col(C::DIM), j.ja3_hash.c_str(), col(C::RST));
-        bool any_reality_port = false;
-        for (auto& pf: R.fps) if (pf.sni && pf.sni->reality_like) any_reality_port = true;
-        if (any_reality_port)
-            tee_printf("  %s  -> Reality server here accepted our non-Chrome JA3 — either uTLS-enforcement is OFF (typical Reality default), or the ACCEPT path always runs and divergence is only in fallback routing%s\n",
+        if (!j.ja3_hash.empty()) {
+            tee_printf("  %sOur ClientHello JA3:%s %s%s%s  (OpenSSL 3.0.x default — real browsers use uTLS-Chrome)\n",
+                   col(C::BOLD), col(C::RST),
+                   col(C::DIM), j.ja3_hash.c_str(), col(C::RST));
+            bool any_reality_port = false;
+            for (auto& pf: R.fps) if (pf.sni && pf.sni->reality_like) any_reality_port = true;
+            if (any_reality_port)
+                tee_printf("  %s  -> Reality server here accepted our non-Chrome JA3 — either uTLS-enforcement is OFF (typical Reality default), or the ACCEPT path always runs and divergence is only in fallback routing%s\n",
+                       col(C::DIM), col(C::RST));
+        } else {
+            tee_printf("  %sOur ClientHello JA3:%s %sunavailable for this OpenSSL build (hard-coded fingerprint is only validated for OpenSSL 3.0.x)%s\n",
+                   col(C::BOLD), col(C::RST),
                    col(C::DIM), col(C::RST));
+        }
     }
 
     tee_printf("\n%s[8/8] Verdict%s\n", col(C::BOLD), col(C::RST));

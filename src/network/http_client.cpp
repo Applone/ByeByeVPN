@@ -6,6 +6,22 @@
 #include <openssl/err.h>
 #include <chrono>
 #include <vector>
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
+
+static bool parse_http_port(const std::string& text, int& port) {
+    if (text.empty()) return false;
+    for (char c : text) {
+        if (!std::isdigit((unsigned char)c)) return false;
+    }
+    char* end = nullptr;
+    errno = 0;
+    long v = std::strtol(text.c_str(), &end, 10);
+    if (errno != 0 || end == text.c_str() || *end != '\0' || v < 1 || v > 65535) return false;
+    port = (int)v;
+    return true;
+}
 
 HttpResp http_get(const std::string& url, int timeout_ms) {
     HttpResp r;
@@ -29,11 +45,30 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
         host = u;
     }
     
-    size_t colon = host.find(':');
-    if (colon != std::string::npos) {
-        port = std::stoi(host.substr(colon + 1));
-        host = host.substr(0, colon);
+    if (host.empty()) { r.err = "bad host"; return r; }
+
+    if (!host.empty() && host[0] == '[') {
+        size_t close = host.find(']');
+        if (close == std::string::npos) { r.err = "bad host"; return r; }
+        if (close + 1 < host.size()) {
+            if (host[close + 1] != ':') { r.err = "bad host"; return r; }
+            if (!parse_http_port(host.substr(close + 2), port)) { r.err = "bad port"; return r; }
+        }
+        host = host.substr(1, close - 1);
+    } else {
+        size_t first_col = host.find(':');
+        size_t last_col = host.rfind(':');
+        if (first_col != std::string::npos && first_col == last_col) {
+            std::string ps = host.substr(last_col + 1);
+            bool all_digits = !ps.empty();
+            for (char c : ps) if (!std::isdigit((unsigned char)c)) all_digits = false;
+            if (all_digits) {
+                if (!parse_http_port(ps, port)) { r.err = "bad port"; return r; }
+                host = host.substr(0, last_col);
+            }
+        }
     }
+    if (host.empty()) { r.err = "bad host"; return r; }
 
     std::string err;
     SOCKET s = tcp_connect(host, port, timeout_ms, err);
@@ -43,13 +78,51 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
     SSL* raw_ssl = nullptr;
     if (is_https) {
         raw_ctx = SSL_CTX_new(TLS_client_method());
+        if (!raw_ctx) { r.err = "ssl_ctx_new"; closesocket(s); return r; }
+        if (SSL_CTX_set_default_verify_paths(raw_ctx) != 1) {
+            r.err = "ssl_verify_paths";
+            SSL_CTX_free(raw_ctx);
+            closesocket(s);
+            return r;
+        }
+        SSL_CTX_set_verify(raw_ctx, SSL_VERIFY_PEER, nullptr);
+
         raw_ssl = SSL_new(raw_ctx);
-        SSL_set_fd(raw_ssl, (int)s);
-        SSL_set_tlsext_host_name(raw_ssl, host.c_str());
+        if (!raw_ssl) { r.err = "ssl_new"; SSL_CTX_free(raw_ctx); closesocket(s); return r; }
+        if (SSL_set_fd(raw_ssl, (int)s) != 1) {
+            r.err = "ssl_set_fd";
+            SSL_free(raw_ssl);
+            SSL_CTX_free(raw_ctx);
+            closesocket(s);
+            return r;
+        }
+        if (SSL_set_tlsext_host_name(raw_ssl, host.c_str()) != 1) {
+            r.err = "ssl_set_sni";
+            SSL_free(raw_ssl);
+            SSL_CTX_free(raw_ctx);
+            closesocket(s);
+            return r;
+        }
+        
+        X509_VERIFY_PARAM *param = SSL_get0_param(raw_ssl);
+        if (!param || X509_VERIFY_PARAM_set1_host(param, host.c_str(), host.size()) != 1) {
+            r.err = "ssl_set_host";
+            SSL_free(raw_ssl);
+            SSL_CTX_free(raw_ctx);
+            closesocket(s);
+            return r;
+        }
         
         // Timeout handling for SSL handshake is complex in non-blocking, so we rely on TCP timeout blocking
         if (SSL_connect(raw_ssl) <= 0) {
             r.err = "ssl_connect";
+            SSL_free(raw_ssl);
+            SSL_CTX_free(raw_ctx);
+            closesocket(s);
+            return r;
+        }
+        if (SSL_get_verify_result(raw_ssl) != X509_V_OK) {
+            r.err = "ssl_verify";
             SSL_free(raw_ssl);
             SSL_CTX_free(raw_ctx);
             closesocket(s);

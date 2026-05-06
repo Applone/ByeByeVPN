@@ -4,6 +4,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 
 #ifdef _WIN32
 #include <conio.h>
@@ -45,7 +46,8 @@ std::vector<int> build_tcp_ports() {
         case PortMode::RANGE: {
             int lo = std::max(1,  g_range_lo);
             int hi = std::min(65535, g_range_hi);
-            p.reserve(hi-lo+1);
+            if (hi < lo) break;
+            p.reserve((size_t)hi - lo + 1);
             for (int i=lo; i<=hi; ++i) p.push_back(i);
         } break;
         case PortMode::LIST:
@@ -130,7 +132,7 @@ std::vector<TcpOpen> scan_tcp(const std::string& host, const std::vector<int>& p
                     break;
                 }
             }
-            Sleep(50);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     });
 

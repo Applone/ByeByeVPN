@@ -112,8 +112,10 @@ std::string cert_claims_brand(const std::string& subject_cn, const std::vector<s
         for (auto& c: ln) c = (char)std::tolower((unsigned char)c);
         if (ln.size() > 2 && ln[0]=='*' && ln[1]=='.') ln = ln.substr(2);
         for (size_t i=0;i<BRAND_TABLE_N;++i) {
+            if (ln == BRAND_TABLE[i].brand) return BRAND_TABLE[i].brand;
+        }
+        for (size_t i=0;i<BRAND_TABLE_N;++i) {
             std::string b = BRAND_TABLE[i].brand;
-            if (ln == b) return BRAND_TABLE[i].brand;
             if (ln.size() > b.size() + 1 &&
                 ln.compare(ln.size()-b.size(), b.size(), b) == 0 &&
                 ln[ln.size()-b.size()-1] == '.') return BRAND_TABLE[i].brand;

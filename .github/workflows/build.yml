@@ -25,7 +25,7 @@ jobs:
             compiler: msvc
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Determine Build Type
         id: build_type
@@ -72,7 +72,7 @@ jobs:
           copy build\${{ steps.build_type.outputs.type }}\byebyevpn.exe staging\
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@604373da71285e27a5007949a10b7ef600173033 # v4.6.1
         with:
           name: byebyevpn-${{ matrix.os }}
           path: staging/*
@@ -87,19 +87,19 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download Linux Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: byebyevpn-ubuntu-latest
           path: out/linux
 
       - name: Download Windows Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: byebyevpn-windows-latest
           path: out/windows
 
       - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             out/linux/byebyevpn

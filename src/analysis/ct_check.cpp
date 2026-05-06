@@ -1,10 +1,15 @@
 #include "ct_check.h"
 #include "../network/http_client.h"
 #include "../core/utils.h"
+#include <cctype>
 
-CtCheck ct_check(const std::string& cert_sha256) {
+CtCheck ct_check(const std::string& cert_sha256, bool allow_remote) {
     CtCheck r;
-    if (cert_sha256.size() < 32) { r.err = "no sha256"; return r; }
+    if (cert_sha256.length() != 64) { r.err = "invalid sha256"; return r; }
+    for (char c : cert_sha256) {
+        if (!isxdigit((unsigned char)c)) { r.err = "invalid sha256"; return r; }
+    }
+    if (!allow_remote) { r.err = "remote query disabled"; return r; }
     r.queried = true;
     std::string url = "https://crt.sh/?q=" + cert_sha256 + "&output=json";
     auto h = http_get(url, 5000);

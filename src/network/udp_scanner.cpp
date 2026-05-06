@@ -39,11 +39,12 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
     if (rc <= 0) { closesocket(s); r.err = "send"; return r; }
     char buf[2048];
     int got = recv(s, buf, sizeof(buf), 0);
+    int saved_err = WSAGetLastError();
     closesocket(s);
     r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now() - t0).count();
              
-    int werr = WSAGetLastError();
+    int werr = saved_err;
 #ifndef _WIN32
     if (werr == EAGAIN) werr = WSAETIMEDOUT;
 #endif

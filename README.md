@@ -25,7 +25,7 @@ Given an IP or hostname, run a full detectability methodology plus modern 2026 t
 3. **TCP port scan**: Connect-scan 1-65535 or curated ports
 4. **UDP probes**: Real handshakes (DNS, IKE, OpenVPN, QUIC, WG, Tailscale, L2TP, Hysteria2, TUIC, AmneziaWG)
 5. **Service fingerprint + CT**: SSH, HTTP, TLS + SNI consistency, proxies, proxy-header leak
-6. **J3 / Active probing**: 8 probes per TLS port (Reality discriminator)
+6. **JA3 / Active probing**: 8 probes per TLS port (Reality discriminator)
 7. **SNITCH + traceroute + SSTP**: RTT vs GeoIP, ICMP hop-count, Microsoft SSTP
 8. **Verdict**: Score 0-100, stack identification, hardening advice
 

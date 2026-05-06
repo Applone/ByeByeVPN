@@ -5,6 +5,8 @@
 #include <map>
 #include <set>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #include <iphlpapi.h>
@@ -13,9 +15,25 @@
 
 static bool icontains(const std::string& hay, const char* needle) {
     std::string a = hay, b = needle;
-    std::transform(a.begin(), a.end(), a.begin(), ::tolower);
-    std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+    std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+    std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c){ return (char)std::tolower(c); });
     return a.find(b) != std::string::npos;
+}
+
+static std::string redact_path(const std::string& path) {
+    if (path.empty()) return path;
+#ifdef _WIN32
+    const char* envs[] = {"USERPROFILE", "APPDATA", "LOCALAPPDATA"};
+#else
+    const char* envs[] = {"HOME"};
+#endif
+    for (const char* e : envs) {
+        const char* v = getenv(e);
+        if (v && strlen(v) > 0) {
+            if (path.find(v) == 0) return "~" + path.substr(strlen(v));
+        }
+    }
+    return path;
 }
 
 #ifdef _WIN32
@@ -326,7 +344,7 @@ void run_local_analysis() {
             tee_printf("  %s● %s%s  pid=%lu  (%s)\n",
                    col(C::GRN), p.name.c_str(), col(C::RST),
                    p.pid, p.category.c_str());
-            if (!p.exe_path.empty()) tee_printf("     path: %s\n", p.exe_path.c_str());
+            if (!p.exe_path.empty()) tee_printf("     path: %s\n", redact_path(p.exe_path).c_str());
         }
     }
 
@@ -334,7 +352,7 @@ void run_local_analysis() {
     if (!cfgs.empty()) {
         tee_printf("\n  %sInstalled tools / config dirs:%s\n", col(C::BOLD), col(C::RST));
         for (auto& c: cfgs)
-            tee_printf("    %s%-32s%s  %s\n", col(C::CYN), c.tool.c_str(), col(C::RST), c.path.c_str());
+            tee_printf("    %s%-32s%s  %s\n", col(C::CYN), c.tool.c_str(), col(C::RST), redact_path(c.path).c_str());
     }
 
     tee_printf("\n%sSummary:%s\n", col(C::BOLD), col(C::RST));

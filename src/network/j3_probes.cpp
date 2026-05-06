@@ -11,7 +11,11 @@ static J3Result j3_send(const std::string& host, int port, const std::string& na
     auto t0 = std::chrono::steady_clock::now();
     std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
     if (s == INVALID_SOCKET) return r;
-    if (dlen > 0) tcp_send_all(s, data, dlen);
+    if (dlen > 0) {
+        if (tcp_send_all(s, data, dlen) != dlen) {
+            closesocket(s); return r;
+        }
+    }
     if (close_after_send) { closesocket(s); return r; }
     char buf[1024]; int n = tcp_recv_to(s, buf, sizeof(buf)-1, 1200);
     closesocket(s);
@@ -59,8 +63,9 @@ std::vector<J3Result> j3_probes(const std::string& host, int port) {
         out.push_back(j3_send(host, port, "SSH banner", req.data(), (int)req.size()));
     }
     {
-        unsigned char buf[512]; RAND_bytes(buf, 512);
-        out.push_back(j3_send(host, port, "random 512B", buf, 512));
+        unsigned char buf[512]; memset(buf, 0, 512);
+        if (RAND_bytes(buf, 512) == 1)
+            out.push_back(j3_send(host, port, "random 512B", buf, 512));
     }
     {
         unsigned char hello[] = {
@@ -84,19 +89,22 @@ std::vector<J3Result> j3_probes(const std::string& host, int port) {
             0x00,0x2b,0x00,0x03, 0x02,0x03,0x04,
             0x00,0x33,0x00,0x02, 0x00,0x00
         };
-        RAND_bytes(hello + 11, 32);
-        for (size_t i = 11 + 32; i + 11 <= sizeof(hello); ++i) {
-            if (hello[i]   == '.' && hello[i+1] == 'i' && hello[i+2] == 'n' &&
-                hello[i+3] == 'v' && hello[i+4] == 'a' && hello[i+5] == 'l' &&
-                hello[i+6] == 'i' && hello[i+7] == 'd' && i >= 3) {
-                unsigned char r[3]; RAND_bytes(r, 3);
-                hello[i-3] = 'a' + (r[0] % 26);
-                hello[i-2] = 'a' + (r[1] % 26);
-                hello[i-1] = 'a' + (r[2] % 26);
-                break;
+        if (RAND_bytes(hello + 11, 32) == 1) {
+            for (size_t i = 11 + 32; i + 11 <= sizeof(hello); ++i) {
+                if (hello[i]   == '.' && hello[i+1] == 'i' && hello[i+2] == 'n' &&
+                    hello[i+3] == 'v' && hello[i+4] == 'a' && hello[i+5] == 'l' &&
+                    hello[i+6] == 'i' && hello[i+7] == 'd' && i >= 3) {
+                    unsigned char r[3]; memset(r, 0, 3);
+                    if (RAND_bytes(r, 3) == 1) {
+                        hello[i-3] = 'a' + (r[0] % 26);
+                        hello[i-2] = 'a' + (r[1] % 26);
+                        hello[i-1] = 'a' + (r[2] % 26);
+                    }
+                    break;
+                }
             }
+            out.push_back(j3_send(host, port, "TLS CH invalid-SNI", hello, (int)sizeof(hello)));
         }
-        out.push_back(j3_send(host, port, "TLS CH invalid-SNI", hello, (int)sizeof(hello)));
     }
     {
         std::string req = "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n";

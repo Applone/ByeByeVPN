@@ -17,19 +17,10 @@ static bool dns_name_match(const std::string& name, const std::string& pat) {
     return _stricmp(name.c_str(), pat.c_str()) == 0;
 }
 
-static std::string extract_cn(const std::string& subject_oneline) {
-    size_t pos = subject_oneline.find("/CN=");
-    if (pos == std::string::npos) return "";
-    size_t end = subject_oneline.find('/', pos + 4);
-    return subject_oneline.substr(pos + 4,
-        end == std::string::npos ? std::string::npos : end - pos - 4);
-}
-
 static bool cert_covers_name(const std::string& sni,
-                             const std::string& subject_oneline,
+                             const std::string& subject_cn,
                              const std::vector<std::string>& san) {
-    std::string cn = extract_cn(subject_oneline);
-    if (dns_name_match(sni, cn)) return true;
+    if (dns_name_match(sni, subject_cn)) return true;
     for (auto& s: san) if (dns_name_match(sni, s)) return true;
     return false;
 }
@@ -75,11 +66,11 @@ SniConsistency sni_consistency(const std::string& ip, int port, const std::strin
 
     if (total >= 3 && same == total) {
         c.same_cert_always = true;
-        bool cert_covers_base = cert_covers_name(base_sni, base.cert_subject, base.san);
+        bool cert_covers_base = cert_covers_name(base_sni, base.subject_cn, base.san);
         if (!cert_covers_base) {
             for (auto& s: alt) {
                 if (_stricmp(s.c_str(), base_sni.c_str()) == 0) continue;
-                if (cert_covers_name(s, base.cert_subject, base.san)) {
+                if (cert_covers_name(s, base.subject_cn, base.san)) {
                     c.reality_like = true;
                     c.matched_foreign_sni = s;
                     break;

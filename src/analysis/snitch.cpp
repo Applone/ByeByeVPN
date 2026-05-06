@@ -109,8 +109,8 @@ static double country_max_rtt_ms(const std::string& cc) {
     return 0.0;
 }
 
-SnitchResult snitch_check(const std::string& target_ip, int target_port, const std::string& country_code) {
-    SnitchResult r; r.country_code = country_code;
+SnitchResult snitch_check(const std::string& target_ip, int target_port, const std::string& target_cc, const std::string& observer_cc) {
+    SnitchResult r; r.country_code = target_cc;
     const int samples = 6;
 
     auto anchor_job = [&](std::string ip, int port) {
@@ -151,12 +151,15 @@ SnitchResult snitch_check(const std::string& target_ip, int target_port, const s
     r.google_median_ms = f_goog.get();
     r.yandex_median_ms = f_yan.get();
 
-    double emin = country_min_rtt_ms(country_code);
-    double emax = country_max_rtt_ms(country_code);
-    r.expected_min_ms = emin;
-    if (emin > 0) {
-        if (r.median_ms < emin * 0.5) r.too_low  = true;
-        if (r.median_ms > emax * 3.0) r.too_high = true;
+    double emin = 0, emax = 0;
+    if (!observer_cc.empty()) {
+        emin = country_min_rtt_ms(target_cc);
+        emax = country_max_rtt_ms(target_cc);
+        r.expected_min_ms = emin;
+        if (emin > 0) {
+            if (r.median_ms < emin * 0.5) r.too_low  = true;
+            if (r.median_ms > emax * 3.0) r.too_high = true;
+        }
     }
     if (r.stddev_ms > 40.0) r.high_jitter = true;
 
@@ -176,11 +179,11 @@ SnitchResult snitch_check(const std::string& target_ip, int target_port, const s
         if (r.too_low)
             snprintf(buf, sizeof(buf),
                      "median %.1fms but %s geo implies >=%.0fms — impossibly low (GeoIP lies OR anycast proxy)",
-                     r.median_ms, country_code.c_str(), emin);
+                     r.median_ms, target_cc.c_str(), emin);
         else if (r.too_high)
             snprintf(buf, sizeof(buf),
                      "median %.1fms is >3x the normal %.0fms band for %s — extra hops in path (tunnel / long middlebox chain)",
-                     r.median_ms, emax, country_code.c_str());
+                     r.median_ms, emax, target_cc.c_str());
         else if (r.high_jitter)
             snprintf(buf, sizeof(buf),
                      "stddev %.1fms over %d samples — high jitter typical of tunnel queue/encryption overhead",
@@ -191,7 +194,7 @@ SnitchResult snitch_check(const std::string& target_ip, int target_port, const s
         else
             snprintf(buf, sizeof(buf),
                      "RTT %.1fms (min %.1f, stddev %.1f) — consistent with %s geolocation",
-                     r.median_ms, r.min_ms, r.stddev_ms, country_code.c_str());
+                     r.median_ms, r.min_ms, r.stddev_ms, target_cc.c_str());
         r.summary = buf;
     }
     return r;

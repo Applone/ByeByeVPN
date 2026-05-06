@@ -23,17 +23,21 @@ UdpResult quic_probe(const std::string& host, int port) {
 }
 
 UdpResult openvpn_probe(const std::string& host, int port) {
-    unsigned char pkt[26];
+    unsigned char pkt[26] = {0};
     pkt[0] = 0x38; 
-    RAND_bytes(pkt+1, 8);     
+    unsigned char rnd_off = 0;
+    if (RAND_bytes(pkt+1, 8) != 1 ||
+        RAND_bytes(&rnd_off, 1) != 1 ||
+        RAND_bytes(pkt+18, 8) != 1) {
+        UdpResult r;
+        r.err = "rng";
+        return r;
+    }
     pkt[9] = 0x00;            
     unsigned int pid = htonl(0);
     memcpy(pkt+10, &pid, 4);  
-    unsigned char rnd_off = 0;
-    RAND_bytes(&rnd_off, 1);
     unsigned int ts = htonl((unsigned int)time(nullptr) - (unsigned int)rnd_off);
     memcpy(pkt+14, &ts, 4);   
-    RAND_bytes(pkt+18, 8);    
     return udp_probe(host, port, pkt, sizeof(pkt), 1200);
 }
 

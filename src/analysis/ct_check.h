@@ -10,6 +10,6 @@ struct CtCheck {
     std::string err;
 };
 
-CtCheck ct_check(const std::string& cert_sha256);
+CtCheck ct_check(const std::string& cert_sha256, bool allow_remote = false);
 
 #endif // ANALYSIS_CT_CHECK_H

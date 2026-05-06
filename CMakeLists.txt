@@ -9,9 +9,9 @@ if(MSVC)
 endif()
 
 set(OPENSSL_USE_STATIC_LIBS TRUE)
-find_package(OpenSSL REQUIRED)
+find_package(OpenSSL 3.0 REQUIRED)
 
-file(GLOB_RECURSE SRC_FILES
+file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     "src/core/*.cpp"
     "src/network/*.cpp"
     "src/analysis/*.cpp"
@@ -38,7 +38,9 @@ if(WIN32)
 else()
     target_link_libraries(byebyevpn PRIVATE pthread dl)
 
-    target_link_options(byebyevpn PRIVATE -static-libgcc -static-libstdc++)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_link_options(byebyevpn PRIVATE -static-libgcc -static-libstdc++)
+    endif()
 
     target_compile_options(byebyevpn PRIVATE
         $<$<CONFIG:Debug>:-g;-O0;-fno-omit-frame-pointer>

@@ -35,10 +35,16 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
     auto t0 = std::chrono::steady_clock::now();
     std::string err; SOCKET s = tcp_connect(ip, port, to_ms, err);
     if (s == INVALID_SOCKET) { r.err = err; return r; }
-    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_client_method()), SSL_CTX_free);
+
+    SSL_CTX* raw_ctx = SSL_CTX_new(TLS_client_method());
+    if (!raw_ctx) { r.err = "ssl_ctx_new"; closesocket(s); return r; }
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(raw_ctx, SSL_CTX_free);
     SSL_CTX_set_min_proto_version(ctx.get(), TLS1_2_VERSION);
     SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
-    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(ctx.get()), SSL_free);
+
+    SSL* raw_ssl = SSL_new(ctx.get());
+    if (!raw_ssl) { r.err = "ssl_new"; closesocket(s); return r; }
+    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
     SSL_set_fd(ssl.get(), (int)s);
     if (!sni.empty()) SSL_set_tlsext_host_name(ssl.get(), sni.c_str());
     
@@ -50,10 +56,38 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
     }
     if (!wire.empty()) SSL_set_alpn_protos(ssl.get(), wire.data(), (unsigned)wire.size());
     
-    if (SSL_connect(ssl.get()) != 1) {
-        unsigned long e = ERR_get_error();
-        char b[256]; ERR_error_string_n(e, b, sizeof(b));
-        r.err = b[0] ? std::string(b) : std::string("tls handshake failed");
+    set_nonblocking(s, true);
+    auto deadline = t0 + std::chrono::milliseconds(to_ms);
+    int ssl_res = 0;
+    while (true) {
+        ssl_res = SSL_connect(ssl.get());
+        if (ssl_res == 1) break;
+        
+        int ssl_err = SSL_get_error(ssl.get(), ssl_res);
+        if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
+            auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) { ssl_res = -1; break; }
+            int remaining = (int)std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+            
+            fd_set fds; FD_ZERO(&fds); FD_SET(s, &fds);
+            timeval tv{}; tv.tv_sec = remaining / 1000; tv.tv_usec = (remaining % 1000) * 1000;
+            int sr = select((int)s + 1, (ssl_err == SSL_ERROR_WANT_READ ? &fds : nullptr),
+                                       (ssl_err == SSL_ERROR_WANT_WRITE ? &fds : nullptr),
+                                       nullptr, &tv);
+            if (sr <= 0) { ssl_res = -1; break; }
+        } else {
+            break;
+        }
+    }
+    set_nonblocking(s, false);
+
+    if (ssl_res != 1) {
+        if (ssl_res == -1) r.err = "timeout during tls handshake";
+        else {
+            unsigned long e = ERR_get_error();
+            char b[256]; ERR_error_string_n(e, b, sizeof(b));
+            r.err = b[0] ? std::string(b) : std::string("tls handshake failed");
+        }
         closesocket(s);
         return r;
     }

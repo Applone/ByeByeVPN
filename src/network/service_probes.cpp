@@ -136,7 +136,11 @@ FpResult fp_shadowsocks(const std::string& host, int port) {
     std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
     if (s == INVALID_SOCKET) { f.silent = true; return f; }
     unsigned char rnd[64];
-    RAND_bytes(rnd, 64);
+    if (RAND_bytes(rnd, 64) != 1) {
+        closesocket(s);
+        f.details = "RNG failure";
+        return f;
+    }
     tcp_send_all(s, rnd, 64);
     char buf[256]; int n = tcp_recv_to(s, buf, sizeof(buf), 800);
     closesocket(s);

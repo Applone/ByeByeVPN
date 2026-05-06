@@ -9,10 +9,16 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
     std::string err;
     SOCKET s = tcp_connect(ip, port, to_ms, err);
     if (s == INVALID_SOCKET) { r.err = err; return r; }
-    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_client_method()), SSL_CTX_free);
+
+    SSL_CTX* raw_ctx = SSL_CTX_new(TLS_client_method());
+    if (!raw_ctx) { r.err = "ssl_ctx_new"; closesocket(s); return r; }
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(raw_ctx, SSL_CTX_free);
     SSL_CTX_set_min_proto_version(ctx.get(), TLS1_2_VERSION);
     SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
-    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(ctx.get()), SSL_free);
+
+    SSL* raw_ssl = SSL_new(ctx.get());
+    if (!raw_ssl) { r.err = "ssl_new"; closesocket(s); return r; }
+    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
     SSL_set_fd(ssl.get(), (int)s);
     if (!host_hdr.empty()) SSL_set_tlsext_host_name(ssl.get(), host_hdr.c_str());
     
@@ -24,7 +30,7 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
         return r;
     }
     r.tls_ok = true;
-    std::string req = "GET / HTTP/1.1\r\nHost: " + (host_hdr.empty()?std::string("example.com"):host_hdr) + "\r\n"
+    std::string req = "GET / HTTP/1.1\r\nHost: " + (host_hdr.empty() ? ip : host_hdr) + "\r\n"
                  "Accept: */*\r\n"
                  "Connection: close\r\n\r\n";
     SSL_write(ssl.get(), req.data(), (int)req.size());

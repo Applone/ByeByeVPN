@@ -32,10 +32,27 @@ static const char* TSPU_REDIRECT_MARKERS[] = {
 
 const char* looks_like_tspu_redirect(const std::string& location) {
     if (location.empty() || location.size() > 512) return nullptr;
-    std::string ll = location;
-    for (auto& ch: ll) ch = (char)std::tolower((unsigned char)ch);
+    
+    std::string host = location;
+    size_t scheme = host.find("://");
+    if (scheme != std::string::npos) host = host.substr(scheme + 3);
+    
+    size_t slash = host.find('/');
+    if (slash != std::string::npos) host = host.substr(0, slash);
+    
+    if (host.empty()) return nullptr;
+    if (host[0] == '[') {
+        size_t close = host.find(']');
+        if (close != std::string::npos) host = host.substr(1, close - 1);
+    } else {
+        size_t colon = host.find(':');
+        if (colon != std::string::npos) host = host.substr(0, colon);
+    }
+
+    for (auto& ch : host) ch = (char)std::tolower((unsigned char)ch);
+
     for (const char** p = TSPU_REDIRECT_MARKERS; *p; ++p) {
-        if (ll.find(*p) != std::string::npos) return *p;
+        if (host.find(*p) != std::string::npos) return *p;
     }
     return nullptr;
 }

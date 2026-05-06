@@ -57,9 +57,14 @@ FpResult sstp_probe(const std::string& host, int port) {
     std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
     if (s == INVALID_SOCKET) { f.silent = true; return f; }
     
-    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_client_method()), SSL_CTX_free);
+    SSL_CTX* raw_ctx = SSL_CTX_new(TLS_client_method());
+    if (!raw_ctx) { closesocket(s); return f; }
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(raw_ctx, SSL_CTX_free);
     SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
-    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(ctx.get()), SSL_free);
+
+    SSL* raw_ssl = SSL_new(ctx.get());
+    if (!raw_ssl) { closesocket(s); return f; }
+    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
     
     SSL_set_fd(ssl.get(), (int)s);
     SSL_set_tlsext_host_name(ssl.get(), host.c_str());

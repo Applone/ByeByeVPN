@@ -20,6 +20,10 @@ static std::string sa_ip(const sockaddr* sa) {
 Resolved resolve_host(const std::string& host) {
     Resolved r; r.host = host;
     auto t0 = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&]() -> long long {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - t0).count();
+    };
 
     // Bypass DNS if host is already an IP address
     struct sockaddr_in sa4;
@@ -43,9 +47,9 @@ Resolved resolve_host(const std::string& host) {
     int rc = getaddrinfo(host.c_str(), nullptr, &hints, &ai);
     std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> ai_ptr(ai, freeaddrinfo);
 #ifdef _WIN32
-    if (rc != 0) { r.err = gai_strerrorA(rc); return r; }
+    if (rc != 0) { r.ms = elapsed_ms(); r.err = gai_strerrorA(rc); return r; }
 #else
-    if (rc != 0) { r.err = gai_strerror(rc); return r; }
+    if (rc != 0) { r.ms = elapsed_ms(); r.err = gai_strerror(rc); return r; }
 #endif
     
     std::vector<std::string> v4_ips, v6_ips;

@@ -2,15 +2,6 @@
 #include <chrono>
 #include <vector>
 
-#ifndef _WIN32
-static void set_nonblocking(SOCKET s, bool nb) {
-    int flags = fcntl(s, F_GETFL, 0);
-    if (nb) flags |= O_NONBLOCK;
-    else flags &= ~O_NONBLOCK;
-    fcntl(s, F_SETFL, flags);
-}
-#endif
-
 SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::string& err) {
     addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
     addrinfo* ai = nullptr;

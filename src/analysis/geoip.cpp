@@ -69,6 +69,7 @@ GeoInfo geo_iplocate(const std::string& ip) {
 
 GeoInfo geo_ip_api_com(const std::string& ip) {
     GeoInfo g; g.source = "ip-api.com";
+    if (!g_use_ip_api) { g.err = "opt-in required (no HTTPS)"; return g; }
     std::string url = "http://ip-api.com/json/";
     if (!ip.empty()) url += ip;
     url += "?fields=status,country,countryCode,city,isp,org,as,asname,hosting,proxy,mobile,query";
@@ -148,7 +149,7 @@ GeoInfo geo_freeipapi(const std::string& ip) {
 
 GeoInfo geo_2ip_ru(const std::string& ip) {
     GeoInfo g; g.source = "2ip.me (RU)";
-    std::string url = "http://api.2ip.me/geo.json?ip=" + ip;
+    std::string url = "https://api.2ip.me/geo.json?ip=" + ip;
     auto r = http_get(url);
     if (!r.ok()) { g.err = "http " + std::to_string(r.status) + " " + r.err; return g; }
     g.ip           = json_get_str(r.body, "ip");
@@ -168,6 +169,7 @@ GeoInfo geo_2ip_ru(const std::string& ip) {
 
 GeoInfo geo_ipapi_ru(const std::string& ip) {
     GeoInfo g; g.source = "ip-api.com/ru (RU)";
+    if (!g_use_ip_api) { g.err = "opt-in required (no HTTPS)"; return g; }
     std::string url = "http://ip-api.com/json/";
     if (!ip.empty()) url += ip;
     url += "?lang=ru&fields=status,country,countryCode,city,isp,org,as,asname,hosting,proxy,mobile,query";
@@ -187,7 +189,7 @@ GeoInfo geo_ipapi_ru(const std::string& ip) {
 
 GeoInfo geo_sypex(const std::string& ip) {
     GeoInfo g; g.source = "sypexgeo.net (RU)";
-    std::string url = "http://api.sypexgeo.net/json/" + ip;
+    std::string url = "https://api.sypexgeo.net/json/" + ip;
     auto r = http_get(url);
     if (!r.ok()) { g.err = "http " + std::to_string(r.status) + " " + r.err; return g; }
     g.ip           = ip;

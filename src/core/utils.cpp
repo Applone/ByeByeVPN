@@ -20,10 +20,12 @@ bool g_stealth    = false;
 bool g_no_geoip   = false;
 bool g_no_ct      = false;
 bool g_udp_jitter = false;
+bool g_use_ip_api = false;
 
 bool   g_save_requested = false;
-FILE*  g_save_fp        = nullptr;
+FILE*  g_save_fp = nullptr;
 string g_save_path;
+string g_observer_cc = "RU";
 
 PortMode    g_port_mode = PortMode::FULL;
 int         g_range_lo  = 1;
@@ -148,26 +150,87 @@ string hex_s(const unsigned char* d, size_t n, bool spaces) {
     return s;
 }
 
-string json_get_str(const string& body, const string& key) {
-    string pat = "\"" + key + "\"";
-    size_t p = 0;
-    while ((p = body.find(pat, p)) != string::npos) {
-        size_t q = p + pat.size();
-        while (q < body.size() && (body[q]==' '||body[q]==':'||body[q]=='\t')) ++q;
-        if (q >= body.size()) return {};
-        if (body[q] == '"') {
-            size_t e = q + 1;
-            string v;
-            while (e < body.size() && body[e] != '"') {
-                if (body[e] == '\\' && e+1 < body.size()) { v += body[e+1]; e += 2; }
-                else { v += body[e]; ++e; }
-            }
-            return v;
-        } else {
-            size_t e = q;
-            while (e < body.size() && body[e]!=',' && body[e]!='}' && body[e]!='\n') ++e;
-            return trim(body.substr(q, e-q));
+namespace JSON {
+    struct Value {
+        std::string s;
+        std::map<std::string, Value> o;
+        std::vector<Value> a;
+        bool is_obj = false, is_arr = false;
+    };
+
+    static std::string unescape(const std::string& s) {
+        std::string r;
+        for (size_t i = 0; i < s.size(); ++i) {
+            if (s[i] == '\\' && i + 1 < s.size()) {
+                char c = s[++i];
+                if (c == 'n') r += '\n'; else if (c == 'r') r += '\r'; else if (c == 't') r += '\t';
+                else if (c == '"') r += '"'; else if (c == '\\') r += '\\';
+                else if (c == 'u' && i + 4 < s.size()) { i += 4; r += '?'; }
+                else r += c;
+            } else r += s[i];
         }
+        return r;
     }
-    return {};
+
+    static Value parse(const std::string& b, size_t& i) {
+        while (i < b.size() && isspace((unsigned char)b[i])) i++;
+        Value v;
+        if (i >= b.size()) return v;
+        if (b[i] == '"') {
+            size_t start = ++i;
+            bool escaped = false;
+            while (i < b.size()) {
+                if (escaped) escaped = false;
+                else if (b[i] == '\\') escaped = true;
+                else if (b[i] == '"') break;
+                i++;
+            }
+            v.s = unescape(b.substr(start, i - start));
+            if (i < b.size()) i++;
+        } else if (b[i] == '{') {
+            v.is_obj = true; i++;
+            while (i < b.size() && b[i] != '}') {
+                Value key = parse(b, i);
+                while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ':')) i++;
+                v.o[key.s] = parse(b, i);
+                while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ',')) i++;
+            }
+            if (i < b.size()) i++;
+        } else if (b[i] == '[') {
+            v.is_arr = true; i++;
+            while (i < b.size() && b[i] != ']') {
+                v.a.push_back(parse(b, i));
+                while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ',')) i++;
+            }
+            if (i < b.size()) i++;
+        } else {
+            size_t start = i;
+            while (i < b.size() && b[i] != ',' && b[i] != '}' && b[i] != ']' && !isspace((unsigned char)b[i])) i++;
+            v.s = b.substr(start, i - start);
+        }
+        return v;
+    }
+
+    static std::string find_key(const Value& v, const std::string& key) {
+        if (v.is_obj) {
+            auto it = v.o.find(key);
+            if (it != v.o.end()) return it->second.s;
+            for (auto& pair : v.o) {
+                std::string r = find_key(pair.second, key);
+                if (!r.empty()) return r;
+            }
+        }
+        if (v.is_arr) {
+            for (auto& child : v.a) {
+                std::string r = find_key(child, key);
+                if (!r.empty()) return r;
+            }
+        }
+        return "";
+    }
+}
+
+string json_get_str(const string& body, const string& key) {
+    size_t i = 0;
+    return JSON::find_key(JSON::parse(body, i), key);
 }
