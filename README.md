@@ -1,12 +1,12 @@
 # ByeByeVPN
 
-```
- ____             ____           __     ______  _   _
+```text
+ ____             ____           __     ______  _   _ 
 | __ ) _   _  ___| __ ) _   _  __\ \   / /  _ \| \ | |
 |  _ \| | | |/ _ \  _ \| | | |/ _ \ \ / /| |_) |  \| |
 | |_) | |_| |  __/ |_) | |_| |  __/\ V / |  __/| |\  |
 |____/ \__, |\___|____/ \__, |\___| \_/  |_|   |_| \_|
-       |___/            |___/
+       |___/            |___/                          
    Full TSPU/DPI/VPN detectability scanner   v2.5.7
 ```
 
@@ -31,13 +31,24 @@ Given an IP or hostname, run a full detectability methodology plus modern 2026 t
 
 ## Build
 
+### Linux (CMake + Ninja)
 ```bash
-# Example for Ubuntu/Debian
-sudo apt install build-essential cmake libssl-dev
+sudo apt install build-essential cmake ninja-build libssl-dev
 git clone https://github.com/pwnnex/ByeByeVPN.git && cd ByeByeVPN
 mkdir build && cd build
-cmake ..
-make
+cmake -G Ninja ..
+ninja
+```
+
+### Windows (CMake + MSVC)
+Open Developer Command Prompt for Visual Studio:
+```cmd
+git clone https://github.com/pwnnex/ByeByeVPN.git
+cd ByeByeVPN
+mkdir build
+cd build
+cmake -G "Visual Studio 17 2022" ..
+cmake --build . --config Release
 ```
 
 ## CLI Usage

@@ -1,4 +1,5 @@
 #include "https_probe.h"
+#include <memory>
 #include "tcp_scanner.h"
 #include "../core/utils.h"
 #include <openssl/ssl.h>
@@ -8,34 +9,35 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
     std::string err;
     SOCKET s = tcp_connect(ip, port, to_ms, err);
     if (s == INVALID_SOCKET) { r.err = err; return r; }
-    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
-    SSL* ssl = SSL_new(ctx);
-    SSL_set_fd(ssl, (int)s);
-    if (!host_hdr.empty()) SSL_set_tlsext_host_name(ssl, host_hdr.c_str());
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_client_method()), SSL_CTX_free);
+    SSL_CTX_set_min_proto_version(ctx.get(), TLS1_2_VERSION);
+    SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
+    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(ctx.get()), SSL_free);
+    SSL_set_fd(ssl.get(), (int)s);
+    if (!host_hdr.empty()) SSL_set_tlsext_host_name(ssl.get(), host_hdr.c_str());
     
     static const unsigned char alpn_h11[] = {8,'h','t','t','p','/','1','.','1'};
-    SSL_set_alpn_protos(ssl, alpn_h11, sizeof(alpn_h11));
-    if (SSL_connect(ssl) != 1) {
+    SSL_set_alpn_protos(ssl.get(), alpn_h11, sizeof(alpn_h11));
+    if (SSL_connect(ssl.get()) != 1) {
         r.err = "tls handshake failed";
-        SSL_free(ssl); SSL_CTX_free(ctx); closesocket(s);
+        closesocket(s);
         return r;
     }
     r.tls_ok = true;
     std::string req = "GET / HTTP/1.1\r\nHost: " + (host_hdr.empty()?std::string("example.com"):host_hdr) + "\r\n"
                  "Accept: */*\r\n"
                  "Connection: close\r\n\r\n";
-    SSL_write(ssl, req.data(), (int)req.size());
+    SSL_write(ssl.get(), req.data(), (int)req.size());
     std::string body;
     char buf[1024];
     for (int i=0; i<6; ++i) {
-        int n = SSL_read(ssl, buf, sizeof(buf));
+        int n = SSL_read(ssl.get(), buf, sizeof(buf));
         if (n <= 0) break;
         body.append(buf, n);
         if (body.size() >= 4096) break;
     }
-    SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx); closesocket(s);
+    SSL_shutdown(ssl.get());
+    closesocket(s);
     r.bytes = (int)body.size();
     if (body.empty()) return r;
     r.responded = true;

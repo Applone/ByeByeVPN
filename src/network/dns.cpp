@@ -1,4 +1,5 @@
 #include "dns.h"
+#include <memory>
 #include "socket_sys.h"
 #include <chrono>
 #include <algorithm>
@@ -19,9 +20,28 @@ static std::string sa_ip(const sockaddr* sa) {
 Resolved resolve_host(const std::string& host) {
     Resolved r; r.host = host;
     auto t0 = std::chrono::steady_clock::now();
+
+    // Bypass DNS if host is already an IP address
+    struct sockaddr_in sa4;
+    struct sockaddr_in6 sa6;
+    if (inet_pton(AF_INET, host.c_str(), &(sa4.sin_addr)) == 1) {
+        r.ips.push_back(host);
+        r.primary_ip = host;
+        r.family = "v4";
+        r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        return r;
+    } else if (inet_pton(AF_INET6, host.c_str(), &(sa6.sin6_addr)) == 1) {
+        r.ips.push_back(host);
+        r.primary_ip = host;
+        r.family = "v6";
+        r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        return r;
+    }
+
     addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
     addrinfo* ai = nullptr;
     int rc = getaddrinfo(host.c_str(), nullptr, &hints, &ai);
+    std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> ai_ptr(ai, freeaddrinfo);
 #ifdef _WIN32
     if (rc != 0) { r.err = gai_strerrorA(rc); return r; }
 #else
@@ -29,7 +49,7 @@ Resolved resolve_host(const std::string& host) {
 #endif
     
     std::vector<std::string> v4_ips, v6_ips;
-    for (auto* p = ai; p; p = p->ai_next) {
+    for (auto* p = ai_ptr.get(); p; p = p->ai_next) {
         std::string ip = sa_ip(p->ai_addr);
         if (p->ai_family == AF_INET) {
             if (std::find(v4_ips.begin(), v4_ips.end(), ip) == v4_ips.end())
@@ -39,7 +59,6 @@ Resolved resolve_host(const std::string& host) {
                 v6_ips.push_back(ip);
         }
     }
-    freeaddrinfo(ai);
     for (auto& s: v4_ips) r.ips.push_back(s);
     for (auto& s: v6_ips) r.ips.push_back(s);
     if (!r.ips.empty()) r.primary_ip = r.ips.front();

@@ -509,6 +509,13 @@ done:
         g_save_fp = nullptr;
         fprintf(stderr, "saved to %s\n", g_save_path.c_str());
     }
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    EVP_cleanup();
+    CRYPTO_cleanup_all_ex_data();
+    ERR_free_strings();
+#endif
+
 #ifdef _WIN32
     WSACleanup();
 #endif

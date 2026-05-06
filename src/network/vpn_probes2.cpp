@@ -1,4 +1,5 @@
 #include "vpn_probes2.h"
+#include <memory>
 #include "vpn_probes.h"
 #include "tcp_scanner.h"
 #include "../core/utils.h"
@@ -55,13 +56,15 @@ FpResult sstp_probe(const std::string& host, int port) {
     FpResult f; f.service = "SSTP?";
     std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
     if (s == INVALID_SOCKET) { f.silent = true; return f; }
-    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
-    SSL* ssl = SSL_new(ctx);
-    SSL_set_fd(ssl, (int)s);
-    SSL_set_tlsext_host_name(ssl, host.c_str());
-    if (SSL_connect(ssl) != 1) {
-        SSL_free(ssl); SSL_CTX_free(ctx); closesocket(s);
+    
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_client_method()), SSL_CTX_free);
+    SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
+    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(ctx.get()), SSL_free);
+    
+    SSL_set_fd(ssl.get(), (int)s);
+    SSL_set_tlsext_host_name(ssl.get(), host.c_str());
+    if (SSL_connect(ssl.get()) != 1) {
+        closesocket(s);
         f.details = "TLS handshake failed (not HTTPS)"; f.silent = true; return f;
     }
     std::string req =
@@ -70,10 +73,12 @@ FpResult sstp_probe(const std::string& host, int port) {
         "Content-Length: 18446744073709551615\r\n"
         "SSTPCORRELATIONID: {00000000-0000-0000-0000-000000000000}\r\n"
         "\r\n";
-    SSL_write(ssl, req.data(), (int)req.size());
+    SSL_write(ssl.get(), req.data(), (int)req.size());
     char buf[1024];
-    int n = SSL_read(ssl, buf, sizeof(buf) - 1);
-    SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx); closesocket(s);
+    int n = SSL_read(ssl.get(), buf, sizeof(buf) - 1);
+    SSL_shutdown(ssl.get());
+    closesocket(s);
+    
     if (n <= 0) { f.details = "TLS ok but SSTP request got no reply"; return f; }
     buf[n] = 0;
     std::string body(buf, n);

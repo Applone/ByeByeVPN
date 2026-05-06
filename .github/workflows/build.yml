@@ -1,0 +1,60 @@
+name: Build ByeByeVPN
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            generator: Ninja
+            compiler: gcc
+          - os: windows-latest
+            generator: "Visual Studio 17 2022"
+            compiler: msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine Build Type
+        id: build_type
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "type=Release" >> $GITHUB_OUTPUT
+          else
+            echo "type=Debug" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libssl-dev gcc g++
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ steps.build_type.outputs.type }}
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=${{ steps.build_type.outputs.type }}
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config ${{ steps.build_type.outputs.type }}
