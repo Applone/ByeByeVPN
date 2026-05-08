@@ -238,9 +238,17 @@ FullReport run_full_target(const std::string& target) {
         g_port_mode == PortMode::FAST ? "FAST" :
         g_port_mode == PortMode::RANGE ? "RANGE" : "LIST";
 
-    tee_printf("\n%s[3/7] TCP port scan%s  mode=%s%s%s  (%zu ports, %d inflight, %dms timeout)\n",
+    const char* tcp_method =
+#if defined(_WIN32)
+        "IOCP connect";
+#else
+        (g_tcp_syn_scan ? "SYN half-open" : "epoll connect");
+#endif
+
+    tee_printf("\n%s[3/7] TCP port scan%s  mode=%s%s%s  method=%s%s%s  (%zu ports, %d inflight, %dms timeout)\n",
                col(C::BOLD), col(C::RST),
                col(C::CYN), mode_name, col(C::RST),
+               col(C::CYN), tcp_method, col(C::RST),
                ports.size(), g_threads, g_tcp_to);
 
     R.open_tcp = scan_tcp(R.dns.primary_ip, ports, g_threads, g_tcp_to, &R.scan_stats);

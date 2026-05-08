@@ -26,9 +26,11 @@ set(BYEBYEVPN_SOURCES
     src/network/http_client.cpp
     src/network/https_probe.cpp
     src/network/j3_probes.cpp
+    src/network/openssl_runtime.cpp
     src/network/port_scan.cpp
     src/network/service_probes.cpp
     src/network/tcp_scanner.cpp
+    src/network/tcp_async_scan.cpp
     src/network/tls_probe.cpp
     src/network/udp_scanner.cpp
     src/network/vpn_probes.cpp

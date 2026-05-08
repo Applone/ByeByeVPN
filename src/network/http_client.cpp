@@ -1,5 +1,6 @@
 #include "http_client.h"
 
+#include "openssl_runtime.h"
 #include "tcp_scanner.h"
 #include "../core/utils.h"
 
@@ -122,6 +123,12 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
     HttpResp r;
     auto t0 = std::chrono::steady_clock::now();
 
+    std::string ossl_err;
+    if (!openssl_runtime_init(&ossl_err)) {
+        r.err = "openssl_init " + ossl_err;
+        return r;
+    }
+
     std::string host;
     std::string path = "/";
     int port = 80;
@@ -227,8 +234,8 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
             return r;
         }
 
-        if (SSL_set_fd(raw_ssl, (int)s) != 1) {
-            r.err = "ssl_set_fd";
+        if (!ssl_attach_socket(raw_ssl, s, &r.err)) {
+            r.err = "ssl_set_fd " + r.err;
             SSL_free(raw_ssl);
             SSL_CTX_free(raw_ctx);
             closesocket(s);

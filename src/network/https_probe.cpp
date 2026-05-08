@@ -1,5 +1,6 @@
 #include "https_probe.h"
 #include <memory>
+#include "openssl_runtime.h"
 #include "tcp_scanner.h"
 #include "../core/utils.h"
 #include <openssl/err.h>
@@ -35,6 +36,12 @@ static std::string ssl_error_message(SSL* ssl, int rc, const char* op) {
 
 HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_hdr, int to_ms) {
     HttpsProbe r;
+    std::string ossl_err;
+    if (!openssl_runtime_init(&ossl_err)) {
+        r.err = "openssl_init " + ossl_err;
+        return r;
+    }
+
     std::string err;
     SOCKET s = tcp_connect(ip, port, to_ms, err);
     if (s == INVALID_SOCKET) { r.err = err; return r; }
@@ -49,8 +56,8 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
     SSL* raw_ssl = SSL_new(ctx.get());
     if (!raw_ssl) { r.err = "ssl_new"; closesocket(s); return r; }
     std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
-    if (SSL_set_fd(ssl.get(), (int)s) != 1) {
-        r.err = "ssl_set_fd";
+    if (!ssl_attach_socket(ssl.get(), s, &r.err)) {
+        r.err = "ssl_set_fd " + r.err;
         closesocket(s);
         return r;
     }

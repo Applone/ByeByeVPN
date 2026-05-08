@@ -4,6 +4,7 @@
 #include "core/utils.h"
 #include "network/dns.h"
 #include "network/j3_probes.h"
+#include "network/openssl_runtime.h"
 #include "network/port_scan.h"
 #include "network/tls_probe.h"
 #include "network/udp_scanner.h"
@@ -159,6 +160,7 @@ void help() {
     tee_printf("  --threads N     parallel TCP connects   (default 500)\n");
     tee_printf("  --tcp-to MS     TCP connect timeout      (default 800)\n");
     tee_printf("  --udp-to MS     UDP recv timeout         (default 900)\n");
+    tee_printf("  --syn           Linux-only TCP SYN half-open scan\n");
     tee_printf("  --no-color      disable ANSI colors\n");
     tee_printf("  -v / --verbose  verbose\n\n");
 
@@ -375,6 +377,13 @@ void interactive() {
 int main_impl(int argc, char** argv) {
     enable_vt();
 
+    std::string ossl_err;
+    if (!openssl_runtime_init(&ossl_err)) {
+        fprintf(stderr, "fatal: OpenSSL initialization failed: %s\n", ossl_err.c_str());
+        fflush(stderr);
+        return 2;
+    }
+
     bool wsa_started = false;
 #ifdef _WIN32
     WSADATA ws{};
@@ -387,11 +396,15 @@ int main_impl(int argc, char** argv) {
     wsa_started = true;
 #endif
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_library_init();
-    SSL_load_error_strings();
-    OpenSSL_add_all_algorithms();
+    const auto early_return = [&](int code) {
+#ifdef _WIN32
+        if (wsa_started) WSACleanup();
 #endif
+        openssl_runtime_cleanup();
+        fflush(stdout);
+        fflush(stderr);
+        return code;
+    };
 
     vector<string> pos;
     for (int i = 1; i < argc; ++i) {
@@ -401,6 +414,7 @@ int main_impl(int argc, char** argv) {
         else if (a == "--threads" && i + 1 < argc) g_threads = parse_int_fatal(argv[++i], "--threads", 1, 10000);
         else if (a == "--tcp-to" && i + 1 < argc) g_tcp_to = parse_int_fatal(argv[++i], "--tcp-to", 1, 60000);
         else if (a == "--udp-to" && i + 1 < argc) g_udp_to = parse_int_fatal(argv[++i], "--udp-to", 1, 60000);
+        else if (a == "--syn") g_tcp_syn_scan = true;
         else if (a == "--stealth") {
             g_stealth = true;
             g_no_geoip = true;
@@ -436,7 +450,7 @@ int main_impl(int argc, char** argv) {
                 if (g_range_lo > g_range_hi) {
                     fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
                     fflush(stderr);
-                    return 1;
+                    return early_return(1);
                 }
                 g_port_mode = PortMode::RANGE;
             }
@@ -455,7 +469,7 @@ int main_impl(int argc, char** argv) {
         } else if (a == "--help" || a == "-h" || a == "/?") {
             help();
             fflush(stdout);
-            return 0;
+            return early_return(0);
         } else {
             pos.push_back(a);
         }
@@ -625,11 +639,7 @@ int main_impl(int argc, char** argv) {
         fprintf(stderr, "saved to %s\n", g_save_path.c_str());
     }
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    EVP_cleanup();
-    CRYPTO_cleanup_all_ex_data();
-    ERR_free_strings();
-#endif
+    openssl_runtime_cleanup();
 
 #ifdef _WIN32
     if (wsa_started) WSACleanup();

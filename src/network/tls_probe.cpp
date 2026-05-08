@@ -1,5 +1,6 @@
 #include "tls_probe.h"
 #include <memory>
+#include "openssl_runtime.h"
 #include "tcp_scanner.h"
 #include "../core/utils.h"
 #include <openssl/ssl.h>
@@ -32,6 +33,13 @@ static std::string x509_name_one(X509_NAME* n) {
 TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
                    const std::string& alpn, int to_ms) {
     TlsProbe r;
+
+    std::string ossl_err;
+    if (!openssl_runtime_init(&ossl_err)) {
+        r.err = "openssl_init " + ossl_err;
+        return r;
+    }
+
     auto t0 = std::chrono::steady_clock::now();
     std::string err; SOCKET s = tcp_connect(ip, port, to_ms, err);
     if (s == INVALID_SOCKET) { r.err = err; return r; }
@@ -45,7 +53,11 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
     SSL* raw_ssl = SSL_new(ctx.get());
     if (!raw_ssl) { r.err = "ssl_new"; closesocket(s); return r; }
     std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
-    SSL_set_fd(ssl.get(), (int)s);
+    if (!ssl_attach_socket(ssl.get(), s, &r.err)) {
+        r.err = "ssl_set_fd " + r.err;
+        closesocket(s);
+        return r;
+    }
     if (!sni.empty()) SSL_set_tlsext_host_name(ssl.get(), sni.c_str());
     
     std::vector<unsigned char> wire;
