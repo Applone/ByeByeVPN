@@ -640,7 +640,7 @@ int main_impl(int argc, char** argv) {
     openssl_runtime_cleanup();
 
 #ifdef _WIN32
-    if (wsa_started) WSACleanup();
+    WSACleanup();
 #endif
 
     fflush(stdout);
