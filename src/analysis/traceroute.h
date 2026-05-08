@@ -16,7 +16,6 @@ struct TraceResult {
     bool  reached_target = false;
     int   max_rtt_jump_ms = 0;
     int   long_hops = 0;
-    int   tspu_hops  = 0;
     std::vector<TraceHop> hops;
 };
 

@@ -1,9 +1,17 @@
 #include "dns.h"
-#include <memory>
-#include "socket_sys.h"
-#include <chrono>
+
 #include <algorithm>
-#include <cstring>
+#include <chrono>
+#include <memory>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#endif
 
 static std::string sa_ip(const sockaddr* sa) {
     char buf[INET6_ADDRSTRLEN] = {0};

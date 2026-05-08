@@ -2,17 +2,7 @@
 #include <cstdio>
 #include <cctype>
 
-bool looks_like_tspu_hop(const std::string& addr) {
-    if (addr.size() < 8 || addr.size() > 15) return false;
-    if (addr.compare(0, 3, "10.") != 0) return false;
-    unsigned a = 0, b = 0, c = 0;
-    if (sscanf(addr.c_str(), "10.%u.%u.%u", &a, &b, &c) != 3) return false;
-    if (a > 255 || b > 255 || c > 255) return false;
-    if (c >= 131 && c <= 235) return true;
-    if (c >= 241 && c <= 245) return true;
-    if (c == 254) return true;
-    return false;
-}
+
 
 static const char* TSPU_REDIRECT_MARKERS[] = {
     "rkn.gov.ru",

@@ -1,5 +1,4 @@
 #include "traceroute.h"
-#include "tspu.h"
 #include "../network/socket_sys.h"
 #include <chrono>
 #include <cstring>
@@ -73,9 +72,6 @@ TraceResult trace_hops(const std::string& target_ip, int max_hops) {
     IcmpCloseHandle(h);
     r.hop_count = 0;
     for (auto& hop: r.hops) if (hop.rtt_ms >= 0) ++r.hop_count;
-    for (auto& hop: r.hops) {
-        if (hop.rtt_ms >= 0 && looks_like_tspu_hop(hop.addr)) ++r.tspu_hops;
-    }
     r.ok = (r.hop_count > 0);
 #else
     struct in_addr dst{}; dst.s_addr = 0;
@@ -211,9 +207,6 @@ TraceResult trace_hops(const std::string& target_ip, int max_hops) {
 
     r.hop_count = 0;
     for (auto& hop: r.hops) if (hop.rtt_ms >= 0) ++r.hop_count;
-    for (auto& hop: r.hops) {
-        if (hop.rtt_ms >= 0 && looks_like_tspu_hop(hop.addr)) ++r.tspu_hops;
-    }
     r.ok = (r.hop_count > 0);
 #endif
     return r;

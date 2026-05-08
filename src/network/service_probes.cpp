@@ -2,7 +2,6 @@
 #include "tcp_scanner.h"
 #include "../analysis/tspu.h"
 #include "../core/utils.h"
-#include <openssl/rand.h>
 
 std::string printable_prefix(const std::string& s, size_t lim) {
     std::string out;
@@ -131,24 +130,3 @@ FpResult fp_http_connect(const std::string& host, int port) {
     return f;
 }
 
-FpResult fp_shadowsocks(const std::string& host, int port) {
-    FpResult f; f.service = "SS?";
-    std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
-    if (s == INVALID_SOCKET) { f.silent = true; return f; }
-    unsigned char rnd[64];
-    if (RAND_bytes(rnd, 64) != 1) {
-        closesocket(s);
-        f.details = "RNG failure";
-        return f;
-    }
-    tcp_send_all(s, rnd, 64);
-    char buf[256]; int n = tcp_recv_to(s, buf, sizeof(buf), 800);
-    closesocket(s);
-    if (n <= 0) {
-        f.service = "silent-on-junk";
-        f.details = "accepts random bytes but never replies (ambiguous: Shadowsocks AEAD, Trojan, Reality hidden-mode, or any firewalled service)";
-    } else {
-        f.details = "responded "+std::to_string(n)+"B: "+printable_prefix(std::string(buf,n));
-    }
-    return f;
-}

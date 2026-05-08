@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.15)
 project(ByeByeVPN)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
@@ -15,7 +16,6 @@ set(BYEBYEVPN_SOURCES
     src/analysis/brand_cert.cpp
     src/analysis/ct_check.cpp
     src/analysis/geoip.cpp
-    src/analysis/local_env.cpp
     src/analysis/sni_consistency.cpp
     src/analysis/snitch.cpp
     src/analysis/traceroute.cpp
@@ -34,7 +34,6 @@ set(BYEBYEVPN_SOURCES
     src/network/tls_probe.cpp
     src/network/udp_scanner.cpp
     src/network/vpn_probes.cpp
-    src/network/vpn_probes2.cpp
 )
 
 add_executable(byebyevpn ${BYEBYEVPN_SOURCES})

@@ -7,7 +7,7 @@
 | |_) | |_| |  __/ |_) | |_| |  __/\ V / |  __/| |\  |
 |____/ \__, |\___|____/ \__, |\___| \_/  |_|   |_| \_|
        |___/            |___/                          
-   Full TSPU/DPI/VPN detectability scanner   v2.5.7
+   Remote signature-less VPN profiler   v3.0.0
 ```
 
 **Discussion / report issues:**
@@ -16,17 +16,17 @@
 
 ## Purpose
 
-Given an IP or hostname, run a full detectability methodology plus modern 2026 tunnel fingerprints against it from an external vantage point. Output: a detection score, the identified stack, and what a DPI-class classifier would decide. No VPN connection to the target is needed - the scanner looks at the destination as a third-party observer, the way an ISP or DPI middlebox sees it.
+Given an IP or hostname, run a remote detectability methodology focused on modern signature-less VPN stacks from an external vantage point. Output: a weighted detection score, identified stack hypothesis, and an emulated DPI-class classifier decision. No VPN connection to the target is needed - the scanner observes the destination as a third-party network observer (ISP/DPI perspective).
 
 ## Pipeline
 
 1. **DNS resolve**: A + AAAA, IPv4 preferred
-2. **GeoIP aggregation**: 9 providers in parallel, ASN + flags
+2. **GeoIP aggregation**: 9 providers in parallel, ASN + tags
 3. **TCP port scan**: Connect-scan 1-65535 or curated ports
-4. **UDP probes**: Real handshakes (DNS, IKE, OpenVPN, QUIC, WG, Tailscale, L2TP, Hysteria2, TUIC, AmneziaWG)
-5. **Service fingerprint + CT**: SSH, HTTP, TLS + SNI consistency, proxies, proxy-header leak
-6. **JA3 / Active probing**: 8 probes per TLS port (Reality discriminator)
-7. **SNITCH + traceroute + SSTP**: RTT vs GeoIP, ICMP hop-count, Microsoft SSTP
+4. **UDP probes**: WireGuard and AmneziaWG handshake probes only
+5. **Service fingerprint + CT**: SSH, HTTP, TLS + SNI consistency, proxy exposure, proxy-header leak
+6. **Active probing (J3)**: multi-probe behaviour checks per TLS-like port
+7. **SNITCH + traceroute**: RTT-vs-GeoIP consistency and ICMP hop-shape analysis
 8. **Verdict**: Score 0-100, stack identification, hardening advice
 
 ## Build
@@ -39,6 +39,8 @@ mkdir build && cd build
 cmake -G Ninja ..
 ninja
 ```
+
+> Requires a C++20 compiler and OpenSSL 3.x development libraries.
 
 ### Windows (CMake + MSVC)
 Open Developer Command Prompt for Visual Studio:
@@ -58,8 +60,7 @@ byebyevpn                        # interactive menu
 byebyevpn <host>                 # full scan
 byebyevpn scan 1.2.3.4           # same, explicit
 byebyevpn ports my.server.ru     # tcp scan only
-byebyevpn udp my.server.ru       # udp probes only
-byebyevpn local                  # scan this machine
+byebyevpn udp my.server.ru       # UDP WG/AWG probes only
 ```
 
 ## License

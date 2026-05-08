@@ -51,11 +51,8 @@ struct FullReport {
         optional<CtCheck>         ct;
     };
     std::vector<PortFp> fps;
-    UdpResult quic;
     optional<SnitchResult>             snitch;
     optional<TraceResult>              trace;
-    std::vector<std::pair<int,UdpResult>>   udp_extra;
-    optional<FpResult>                 sstp;
     ScanStats scan_stats;
     bool      bgp_blackhole_likely = false;
     int    score = 0;

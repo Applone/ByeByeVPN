@@ -1,71 +1,80 @@
-#include "core/utils.h"
-#include "cli/orchestrator.h"
 #include "analysis/geoip.h"
-#include "network/dns.h"
-#include "network/tcp_scanner.h"
-#include "network/udp_scanner.h"
-#include "network/service_probes.h"
-#include "network/vpn_probes.h"
-#include "network/tls_probe.h"
 #include "analysis/sni_consistency.h"
-#include "network/j3_probes.h"
 #include "analysis/snitch.h"
 #include "analysis/traceroute.h"
-#include "analysis/local_env.h"
+#include "cli/orchestrator.h"
+#include "core/utils.h"
+#include "network/dns.h"
+#include "network/j3_probes.h"
 #include "network/port_scan.h"
-#include <openssl/ssl.h>
-#include <string>
-#include <set>
-#include <future>
-#include <vector>
-#include <cstring>
-#include <algorithm>
-#include <cerrno>
+#include "network/tls_probe.h"
+#include "network/udp_scanner.h"
+#include "network/vpn_probes.h"
 
-static bool try_parse_int(const std::string& s, int& out, int min_v, int max_v) {
+#include <openssl/ssl.h>
+
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <future>
+#include <set>
+#include <string>
+#include <vector>
+
+#if __cplusplus >= 202002L && __has_include(<format>)
+#include <format>
+#define BYEBYEVPN_HAS_STD_FORMAT 1
+#else
+#define BYEBYEVPN_HAS_STD_FORMAT 0
+#endif
+
+namespace {
+
+using std::set;
+using std::string;
+using std::vector;
+
+bool try_parse_int(const string& s, int& out, const int min_v, const int max_v) {
     if (s.empty()) return false;
     char* endptr = nullptr;
     errno = 0;
-    long res = strtol(s.c_str(), &endptr, 10);
+    const long res = strtol(s.c_str(), &endptr, 10);
     if (errno != 0 || endptr == s.c_str() || *endptr != '\0' || res < min_v || res > max_v) return false;
-    out = (int)res;
+    out = static_cast<int>(res);
     return true;
 }
 
-static int parse_int_fatal(const char* s, const char* name, int min_v, int max_v) {
+int parse_int_fatal(const char* s, const char* name, const int min_v, const int max_v) {
     int out = 0;
     if (!try_parse_int(s, out, min_v, max_v)) {
         fprintf(stderr, "Error: invalid value for %s: '%s' (expected %d-%d)\n", name, s, min_v, max_v);
-        exit(1);
+        std::exit(1);
     }
     return out;
 }
 
-using std::string;
-using std::vector;
-using std::set;
-
-static string extract_target_arg(const vector<string>& pos) {
+string extract_target_arg(const vector<string>& pos) {
     if (pos.empty()) return {};
     static const set<string> cmds = {
-        "scan","full","ports","udp","tls","j3","geoip",
-        "snitch","trace","traceroute","local","me","self","help"
+        "scan", "full", "ports", "udp", "tls", "j3", "geoip", "snitch", "trace", "traceroute", "help"
     };
     if (pos.size() >= 2 && cmds.count(pos[0])) {
-        if (pos[0] == "local" || pos[0] == "me" || pos[0] == "self" || pos[0] == "help") return {};
+        if (pos[0] == "help") return {};
         return pos[1];
     }
-    if (pos[0] == "local" || pos[0] == "me" || pos[0] == "self" || pos[0] == "help") return {};
+    if (pos[0] == "help") return {};
     return pos[0];
 }
 
-static string default_save_path_for_target(const string& target) {
+string default_save_path_for_target(const string& target) {
     if (target.empty()) return "byebyevpn-scan.md";
     string safe;
-    for (char c: target) {
-        if (c==':'||c=='/'||c=='\\'||c=='*'||c=='?'||c=='"'||
-            c=='<'||c=='>'||c=='|') safe += '_';
-        else                        safe += c;
+    for (const char c : target) {
+        if (c == ':' || c == '/' || c == '\\' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+            safe += '_';
+        } else {
+            safe += c;
+        }
     }
     return "byebyevpn-" + safe + ".md";
 }
@@ -73,38 +82,53 @@ static string default_save_path_for_target(const string& target) {
 void print_geo(const GeoInfo& g) {
     if (!g.err.empty()) {
         tee_printf("  %s%-12s%s %serr: %s%s\n",
-               col(C::CYN), g.source.c_str(), col(C::RST),
-               col(C::RED), g.err.c_str(), col(C::RST));
+                   col(C::CYN), g.source.c_str(), col(C::RST),
+                   col(C::RED), g.err.c_str(), col(C::RST));
         return;
     }
+
     tee_printf("  %s%-12s%s IP %s%-15s%s  %s%s%s  (%s) AS %s %s\n",
-           col(C::CYN), g.source.c_str(), col(C::RST),
-           col(C::WHT), g.ip.c_str(), col(C::RST),
-           col(C::BOLD), g.country_code.empty() ? g.country.c_str() : g.country_code.c_str(), col(C::RST),
-           g.city.c_str(), g.asn.c_str(), g.asn_org.c_str());
+               col(C::CYN), g.source.c_str(), col(C::RST),
+               col(C::WHT), g.ip.c_str(), col(C::RST),
+               col(C::BOLD), g.country_code.empty() ? g.country.c_str() : g.country_code.c_str(), col(C::RST),
+               g.city.c_str(), g.asn.c_str(), g.asn_org.c_str());
+
     std::string flags;
-    auto add = [&](bool v, const char* n, const char* c){
-        if (v) { if(!flags.empty()) flags += " "; flags += col(c); flags += n; flags += col(C::RST); }
+    const auto add = [&](const bool v, const char* n, const char* c) {
+        if (v) {
+            if (!flags.empty()) flags += ' ';
+            flags += col(c);
+            flags += n;
+            flags += col(C::RST);
+        }
     };
+
     add(g.is_hosting, "HOSTING", C::YEL);
-    add(g.is_vpn,     "VPN",     C::RED);
-    add(g.is_proxy,   "PROXY",   C::RED);
-    add(g.is_tor,     "TOR",     C::RED);
-    add(g.is_abuser,  "ABUSER",  C::RED);
+    add(g.is_vpn, "VPN", C::RED);
+    add(g.is_proxy, "PROXY", C::RED);
+    add(g.is_tor, "TOR", C::RED);
+    add(g.is_abuser, "ABUSER", C::RED);
+
     if (!flags.empty()) tee_printf("               flags: %s\n", flags.c_str());
 }
 
-static GeoInfo safe_get_geo(std::future<GeoInfo>& f, const std::string& source) {
+GeoInfo safe_get_geo(std::future<GeoInfo>& f, const std::string& source) {
     try {
         return f.get();
     } catch (const std::exception& e) {
-        GeoInfo g; g.source = source; g.err = e.what(); return g;
+        GeoInfo g;
+        g.source = source;
+        g.err = e.what();
+        return g;
     } catch (...) {
-        GeoInfo g; g.source = source; g.err = "unknown exception"; return g;
+        GeoInfo g;
+        g.source = source;
+        g.err = "unknown exception";
+        return g;
     }
 }
 
-static void clear_screen() {
+void clear_screen() {
 #ifdef _WIN32
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode = 0;
@@ -115,180 +139,229 @@ static void clear_screen() {
     fflush(stdout);
 }
 
-static void help() {
-    tee_printf("ByeByeVPN — full TSPU/DPI/VPN detectability scanner\n\n");
+void help() {
+    tee_printf("ByeByeVPN — remote server profiling for signature-less VPN detection\n\n");
     tee_printf("Usage:\n");
     tee_printf("  byebyevpn                      interactive menu\n");
     tee_printf("  byebyevpn <ip-or-host>         full scan (recommended)\n");
     tee_printf("  byebyevpn scan <ip>            full scan same\n");
     tee_printf("  byebyevpn ports <ip>           TCP port scan only\n");
-    tee_printf("  byebyevpn udp <ip>             UDP probes only\n");
+    tee_printf("  byebyevpn udp <ip>             UDP WG/AWG probes only\n");
     tee_printf("  byebyevpn tls <ip> [port]      TLS + SNI consistency only\n");
-    tee_printf("  byebyevpn j3 <ip> [port]       J3 active probing only\n");
+    tee_printf("  byebyevpn j3 <ip> [port]       active junk probing only\n");
     tee_printf("  byebyevpn geoip <ip>           GeoIP only\n");
-    tee_printf("  byebyevpn snitch <ip> [port]   SNITCH RTT/GeoIP consistency (methodika §10.1)\n");
-    tee_printf("  byebyevpn trace <ip>           Traceroute hop-count analysis\n");
-    tee_printf("  byebyevpn local                scan THIS machine (split-tunnel / VPN procs)\n\n");
+    tee_printf("  byebyevpn snitch <ip> [port]   SNITCH RTT/GeoIP consistency\n");
+    tee_printf("  byebyevpn trace <ip>           traceroute hop analysis\n\n");
+
     tee_printf("Port-scan modes (default: --full):\n");
     tee_printf("  --full              scan ALL ports 1-65535  (default)\n");
-    tee_printf("  --fast              205 curated VPN/proxy/TLS/admin ports\n");
+    tee_printf("  --fast              curated port subset\n");
     tee_printf("  --range 1000-2000   scan a port range\n");
     tee_printf("  --ports 80,443,8443 scan explicit port list\n\n");
+
     tee_printf("Tuning:\n");
     tee_printf("  --threads N     parallel TCP connects   (default 500)\n");
     tee_printf("  --tcp-to MS     TCP connect timeout      (default 800)\n");
     tee_printf("  --udp-to MS     UDP recv timeout         (default 900)\n");
     tee_printf("  --no-color      disable ANSI colors\n");
     tee_printf("  -v / --verbose  verbose\n\n");
-    tee_printf("Stealth / privacy (opt-outs for 3rd-party-service leakage and\n");
-    tee_printf("behavioural-burst fingerprint — default OFF, full scan behaviour):\n");
-    tee_printf("  --stealth       enable --no-geoip + --no-ct + --udp-jitter together\n");
-    tee_printf("  --no-geoip      skip all 9 3rd-party GeoIP/ASN lookups (target IP stays local)\n");
-    tee_printf("  --no-ct         skip crt.sh Certificate Transparency lookup (cert SHA stays local)\n");
+
+    tee_printf("Stealth / privacy:\n");
+    tee_printf("  --stealth       enable --no-geoip + --no-ct + --udp-jitter\n");
+    tee_printf("  --no-geoip      skip all 3rd-party GeoIP lookups\n");
+    tee_printf("  --no-ct         skip crt.sh CT lookup\n");
     tee_printf("  --use-ip-api    allow HTTP-only ip-api.com lookups (default OFF)\n");
-    tee_printf("  --udp-jitter    add 50-300ms random delay between UDP probes (smears port burst)\n\n");
-    tee_printf("Save scan output to file (#7):\n");
-    tee_printf("  --save           write the scan to 'byebyevpn-<target>.md' in the current directory\n");
-    tee_printf("  --save <path>    write the scan to <path> (still wrapped as markdown)\n");
-    tee_printf("                   ANSI colors are stripped from the file; terminal output is unchanged\n\n");
-    tee_printf("GeoIP sources (9 providers, 3 EU / 3 RU / 3 global):\n");
-    tee_printf("  EU:     ipapi.is, iplocate.io, freeipapi.com\n");
-    tee_printf("  RU:     2ip.io/2ip.me, sypexgeo.net, ip-api.com/ru (opt-in)\n");
-    tee_printf("  global: ipwho.is, ipinfo.io, ip-api.com (opt-in)\n");
+    tee_printf("  --udp-jitter    add random delay between UDP probes\n\n");
+
+    tee_printf("Save scan output:\n");
+    tee_printf("  --save           write to byebyevpn-<target>.md\n");
+    tee_printf("  --save <path>    write to custom path\n");
 }
 
-static void pause_for_enter() {
+void pause_for_enter() {
     tee_printf("\n%s[Enter] to continue...%s", col(C::DIM), col(C::RST));
     fflush(stdout);
-    int c; while ((c = getchar()) != EOF && c != '\n') {}
+    int c;
+    while ((c = getchar()) != EOF && c != '\n') {}
 }
 
-static string ask(const string& prompt) {
-    tee_printf("%s", prompt.c_str()); fflush(stdout);
+string ask(const string& prompt) {
+    tee_printf("%s", prompt.c_str());
+    fflush(stdout);
     char buf[256] = {0};
     if (!fgets(buf, sizeof(buf), stdin)) return {};
     return trim(buf);
 }
 
-static void interactive() {
+void show_udp_wg(const string& ip) {
+    const auto show = [&](const char* name, const int port, const UdpResult& u) {
+        std::string status;
+#if BYEBYEVPN_HAS_STD_FORMAT
+        status = u.responded ? std::format("RESP {}B {}", u.bytes, u.reply_hex)
+                             : std::format("no answer ({})", u.err);
+#else
+        if (u.responded) {
+            status = "RESP " + std::to_string(u.bytes) + "B " + u.reply_hex;
+        } else {
+            status = "no answer (" + u.err + ")";
+        }
+#endif
+        tee_printf("  UDP:%-5d  %-30s  %s\n", port, name, status.c_str());
+    };
+
+    show("WireGuard handshake", 51820, wireguard_probe(ip, 51820));
+    show("WireGuard alt-port", 41641, wireguard_probe(ip, 41641));
+    show("AmneziaWG (Sx=8)", 55555, amneziawg_probe(ip, 55555));
+}
+
+void interactive() {
     for (;;) {
         clear_screen();
         banner();
-        tee_printf("  %s[1]%s  Full scan             — end-to-end scan of an IP/hostname\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[2]%s  TCP port scan         — TCP port-scan only\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[3]%s  UDP probes            — OpenVPN / WireGuard / IKE / QUIC / DNS\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[4]%s  TLS + SNI consistency — TLS audit on a single port (Reality discriminator)\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[5]%s  J3 active probing     — TSPU/GFW-style probes on one port\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[6]%s  GeoIP lookup          — country / ASN / VPN-flag aggregation\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[7]%s  Local analysis        — this machine: VPN adapters, split-tunnel, processes\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[8]%s  SNITCH latency check  — RTT + GeoIP consistency (methodika §10.1)\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[9]%s  Traceroute            — ICMP hop count analysis (ttl sweep)\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[1]%s  Full scan             — end-to-end remote profile\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[2]%s  TCP port scan         — TCP scan only\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[3]%s  UDP WG/AWG probes     — signature-less VPN probes\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[4]%s  TLS + SNI consistency — Reality discriminator\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[5]%s  J3 active probing     — active junk probes\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[6]%s  GeoIP lookup          — country / ASN aggregation\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[7]%s  SNITCH latency check  — RTT + GeoIP consistency\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[8]%s  Traceroute            — ICMP hop analysis\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[0]%s  Exit\n\n", col(C::CYN), col(C::RST));
-        string s = ask("  > ");
+
+        const string s = ask("  > ");
         if (s.empty()) continue;
-        char c = s[0];
+        const char c = s[0];
+
         if (c == '0' || c == 'q' || c == 'Q') break;
-        else if (c == '1') {
-            string t = ask("  target (IP or hostname): ");
+
+        if (c == '1') {
+            const string t = ask("  target (IP or hostname): ");
             if (!t.empty()) run_full_target(t);
             pause_for_enter();
-        } else if (c == '2') {
-            string t = ask("  target IP: ");
+            continue;
+        }
+
+        if (c == '2') {
+            const string t = ask("  target IP or host: ");
             if (!t.empty()) {
-                auto rs = resolve_host(t);
-                auto op = scan_tcp(rs.primary_ip.empty()?t:rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
-                for (auto& o: op) tee_printf("  :%-5d  %lldms  %s%s\n", o.port, o.connect_ms,
-                                          port_hint(o.port), o.banner.empty()?"":(" banner="+printable_prefix(o.banner,60)).c_str());
+                const auto rs = resolve_host(t);
+                const auto op = scan_tcp(rs.primary_ip.empty() ? t : rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
+                for (const auto& o : op) {
+                    std::string extra;
+                    if (!o.banner.empty()) {
+                        extra = " banner=" + printable_prefix(o.banner, 60);
+                    }
+                    tee_printf("  :%-5d  %lldms  %s%s\n",
+                               o.port,
+                               o.connect_ms,
+                               port_hint(o.port),
+                               extra.c_str());
+                }
             }
             pause_for_enter();
-        } else if (c == '3') {
-            string t = ask("  target IP: ");
+            continue;
+        }
+
+        if (c == '3') {
+            const string t = ask("  target IP or host: ");
             if (!t.empty()) {
-                auto rs = resolve_host(t); string ip = rs.primary_ip.empty()?t:rs.primary_ip;
-                auto show=[&](const char*n,int p,UdpResult u){
-                    tee_printf("  UDP:%-5d  %-22s  %s\n", p, n,
-                        u.responded?("RESP "+std::to_string(u.bytes)+"B "+u.reply_hex).c_str()
-                                    :("no answer ("+u.err+")").c_str());
-                };
-                show("DNS",       53,    dns_probe(ip,53));
-                show("IKEv2",     500,   ike_probe(ip,500));
-                show("IKE NAT-T", 4500,  ike_probe(ip,4500));
-                show("OpenVPN",   1194,  openvpn_probe(ip,1194));
-                show("QUIC",      443,   quic_probe(ip,443));
-                show("WireGuard", 51820, wireguard_probe(ip,51820));
-                show("Tailscale", 41641, wireguard_probe(ip,41641));
+                const auto rs = resolve_host(t);
+                const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
+                show_udp_wg(ip);
             }
             pause_for_enter();
-        } else if (c == '4') {
-            string t = ask("  target host (used as SNI): ");
-            string ps = ask("  port (default 443): ");
+            continue;
+        }
+
+        if (c == '4') {
+            const string t = ask("  target host (used as SNI): ");
+            const string ps = ask("  port (default 443): ");
             int port = 443;
             if (!ps.empty() && !try_parse_int(ps, port, 1, 65535)) {
                 tee_printf("  %serror: invalid port '%s', using default 443%s\n", col(C::RED), ps.c_str(), col(C::RST));
             }
             if (!t.empty()) {
-                auto rs = resolve_host(t);
-                string ip = rs.primary_ip.empty()?t:rs.primary_ip;
-                auto tp = tls_probe(ip, port, t);
-                if (!tp.ok) tee_printf("  TLS fail: %s\n", tp.err.c_str());
-                else {
+                const auto rs = resolve_host(t);
+                const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
+                const auto tp = tls_probe(ip, port, t);
+                if (!tp.ok) {
+                    tee_printf("  TLS fail: %s\n", tp.err.c_str());
+                } else {
                     tee_printf("  %s%s%s / %s / ALPN=%s / %s / %lldms\n",
-                           col(C::BOLD), tp.version.c_str(), col(C::RST),
-                           tp.cipher.c_str(), tp.alpn.c_str(), tp.group.c_str(), tp.handshake_ms);
+                               col(C::BOLD), tp.version.c_str(), col(C::RST),
+                               tp.cipher.c_str(), tp.alpn.c_str(), tp.group.c_str(), tp.handshake_ms);
                     tee_printf("  cert: %s\n", tp.cert_subject.c_str());
                     tee_printf("  issuer: %s\n", tp.cert_issuer.c_str());
                     tee_printf("  sha256: %s\n", tp.cert_sha256.c_str());
-                    auto sc = sni_consistency(ip, port, t);
-                    for (auto& e: sc.entries)
+
+                    const auto sc = sni_consistency(ip, port, t);
+                    for (const auto& e : sc.entries) {
+#if BYEBYEVPN_HAS_STD_FORMAT
+                        const std::string sha = e.ok ? std::format("sha:{}", e.sha.substr(0, 16)) : "fail";
+#else
+                        const std::string sha = e.ok ? ("sha:" + e.sha.substr(0, 16)) : "fail";
+#endif
                         tee_printf("    alt SNI %-35s  %s  %s\n",
-                               e.sni.c_str(),
-                               e.ok ? ("sha:"+e.sha.substr(0,16)).c_str() : "fail",
-                               (e.ok && e.sha == sc.base_sha) ? "SAME" : "diff");
-                    if (sc.reality_like)
-                        tee_printf("  %s=> Reality/XTLS pattern: cert covers foreign SNI '%s'%s\n",
-                               col(C::GRN), sc.matched_foreign_sni.c_str(), col(C::RST));
-                    else if (sc.default_cert_only)
+                                   e.sni.c_str(),
+                                   sha.c_str(),
+                                   (e.ok && e.sha == sc.base_sha) ? "SAME" : "diff");
+                    }
+
+                    if (sc.reality_like) {
+                        tee_printf("  %s=> Reality/XTLS pattern (matched foreign SNI '%s')%s\n",
+                                   col(C::GRN), sc.matched_foreign_sni.c_str(), col(C::RST));
+                    } else if (sc.default_cert_only) {
                         tee_printf("  %s=> plain TLS server with a single default cert (NOT Reality)%s\n",
-                               col(C::CYN), col(C::RST));
-                    else if (sc.same_cert_always)
-                        tee_printf("  %s=> identical cert for all SNIs but covers no foreign SNI (inconclusive)%s\n",
-                               col(C::YEL), col(C::RST));
-                    else
-                        tee_printf("  %s=> cert varies per SNI (multi-tenant TLS, NOT Reality)%s\n",
-                               col(C::YEL), col(C::RST));
+                                   col(C::CYN), col(C::RST));
+                    } else if (sc.same_cert_always) {
+                        tee_printf("  %s=> identical cert for all SNIs without foreign coverage (inconclusive)%s\n",
+                                   col(C::YEL), col(C::RST));
+                    } else {
+                        tee_printf("  %s=> cert varies per SNI (multi-tenant TLS, not Reality)%s\n",
+                                   col(C::YEL), col(C::RST));
+                    }
                 }
             }
             pause_for_enter();
-        } else if (c == '5') {
-            string t = ask("  target IP: ");
-            string ps = ask("  port: ");
+            continue;
+        }
+
+        if (c == '5') {
+            const string t = ask("  target IP or host: ");
+            const string ps = ask("  port: ");
             if (!t.empty() && !ps.empty()) {
                 int port = 0;
                 if (!try_parse_int(ps, port, 1, 65535)) {
                     tee_printf("  %serror: invalid port '%s'%s\n", col(C::RED), ps.c_str(), col(C::RST));
                 } else {
-                    auto rs = resolve_host(t); string ip = rs.primary_ip.empty()?t:rs.primary_ip;
-                    auto probes = j3_probes(ip, port);
-                    for (auto& p: probes) {
-                        tee_printf("  %-30s  %s  %dB %s\n", p.name.c_str(),
-                            p.responded?"RESP":"SILENT",
-                            p.bytes,
-                            p.responded ? printable_prefix(p.first_line,60).c_str() : "(dropped)");
+                    const auto rs = resolve_host(t);
+                    const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
+                    const auto probes = j3_probes(ip, port);
+                    for (const auto& p : probes) {
+                        tee_printf("  %-30s  %s  %dB %s\n",
+                                   p.name.c_str(),
+                                   p.responded ? "RESP" : "SILENT",
+                                   p.bytes,
+                                   p.responded ? printable_prefix(p.first_line, 60).c_str() : "(dropped)");
                     }
                 }
             }
             pause_for_enter();
-        } else if (c == '6') {
-            string t = ask("  IP (blank = your IP): ");
-            auto f1 = std::async(std::launch::async, geo_ipapi_is,   t);   
-            auto f2 = std::async(std::launch::async, geo_iplocate,   t);
-            auto f3 = std::async(std::launch::async, geo_freeipapi,  t);
-            auto f4 = std::async(std::launch::async, geo_2ip_ru,     t);   
-            auto f5 = std::async(std::launch::async, geo_ipapi_ru,   t);
-            auto f6 = std::async(std::launch::async, geo_sypex,      t);
-            auto f7 = std::async(std::launch::async, geo_ip_api_com, t);   
-            auto f8 = std::async(std::launch::async, geo_ipwho_is,   t);
-            auto f9 = std::async(std::launch::async, geo_ipinfo_io,  t);
+            continue;
+        }
+
+        if (c == '6') {
+            const string t = ask("  IP (blank = your IP): ");
+            auto f1 = std::async(std::launch::async, geo_ipapi_is, t);
+            auto f2 = std::async(std::launch::async, geo_iplocate, t);
+            auto f3 = std::async(std::launch::async, geo_freeipapi, t);
+            auto f4 = std::async(std::launch::async, geo_2ip_ru, t);
+            auto f5 = std::async(std::launch::async, geo_ipapi_ru, t);
+            auto f6 = std::async(std::launch::async, geo_sypex, t);
+            auto f7 = std::async(std::launch::async, geo_ip_api_com, t);
+            auto f8 = std::async(std::launch::async, geo_ipwho_is, t);
+            auto f9 = std::async(std::launch::async, geo_ipinfo_io, t);
+
             tee_printf("  %s-- EU --%s\n", col(C::BOLD), col(C::RST));
             print_geo(safe_get_geo(f1, "ipapi.is"));
             print_geo(safe_get_geo(f2, "iplocate.io"));
@@ -301,131 +374,145 @@ static void interactive() {
             print_geo(safe_get_geo(f7, "ip-api.com"));
             print_geo(safe_get_geo(f8, "ipwho.is"));
             print_geo(safe_get_geo(f9, "ipinfo.io"));
+
             pause_for_enter();
-        } else if (c == '7') {
-            run_local_analysis();
-            pause_for_enter();
-        } else if (c == '8') {
-            string t = ask("  target IP or host: ");
-            string ps = ask("  TCP port (default 443): ");
+            continue;
+        }
+
+        if (c == '7') {
+            const string t = ask("  target IP or host: ");
+            const string ps = ask("  TCP port (default 443): ");
             int port = 443;
             if (!ps.empty() && !try_parse_int(ps, port, 1, 65535)) {
                 tee_printf("  %serror: invalid port '%s', using default 443%s\n", col(C::RED), ps.c_str(), col(C::RST));
             }
             if (!t.empty()) {
-                auto rs = resolve_host(t);
-                string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
-                auto g = geo_ip_api_com(ip);
-                string cc = g.country_code;
-                auto sn = snitch_check(ip, port, cc, g_observer_cc);
+                const auto rs = resolve_host(t);
+                const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
+                const auto g = geo_ip_api_com(ip);
+                const string cc = g.country_code;
+                const auto sn = snitch_check(ip, port, cc, g_observer_cc);
                 tee_printf("  Country (ip-api.com): %s  /  Target port: %d\n", cc.c_str(), port);
                 tee_printf("  median=%.1fms  min=%.1fms  max=%.1fms  stddev=%.1fms  samples=%d\n",
-                       sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
+                           sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
                 tee_printf("  Anchors:  Cloudflare=%.1fms  Google=%.1fms  Yandex=%.1fms\n",
-                       sn.cf_median_ms, sn.google_median_ms, sn.yandex_median_ms);
-                tee_printf("  Expected physical_min for %s: %.0fms\n",
-                       cc.c_str(), sn.expected_min_ms);
+                           sn.cf_median_ms, sn.google_median_ms, sn.yandex_median_ms);
+                tee_printf("  Expected physical_min for %s: %.0fms\n", cc.c_str(), sn.expected_min_ms);
                 tee_printf("  %s%s%s\n",
-                       (sn.too_low || sn.too_high) ? col(C::RED) :
-                       (sn.high_jitter || sn.anchor_ratio_off) ? col(C::YEL) : col(C::GRN),
-                       sn.summary.c_str(), col(C::RST));
+                           (sn.too_low || sn.too_high) ? col(C::RED)
+                                                       : (sn.high_jitter || sn.anchor_ratio_off) ? col(C::YEL)
+                                                                                                  : col(C::GRN),
+                           sn.summary.c_str(), col(C::RST));
             }
             pause_for_enter();
-        } else if (c == '9') {
-            string t = ask("  target IP or host: ");
+            continue;
+        }
+
+        if (c == '8') {
+            const string t = ask("  target IP or host: ");
             if (!t.empty()) {
-                auto rs = resolve_host(t);
-                string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
-                auto tr = trace_hops(ip, 20);
-                if (!tr.ok) { tee_printf("  no hops returned (ICMP filtered)\n"); }
-                else {
-                    for (auto& h: tr.hops) {
-                        if (h.rtt_ms < 0)
-                            tee_printf("  %2d  *\n", h.ttl);
-                        else
-                            tee_printf("  %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
+                const auto rs = resolve_host(t);
+                const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
+                const auto tr = trace_hops(ip, 20);
+                if (!tr.ok) {
+                    tee_printf("  no hops returned (ICMP filtered)\n");
+                } else {
+                    for (const auto& h : tr.hops) {
+                        if (h.rtt_ms < 0) tee_printf("  %2d  *\n", h.ttl);
+                        else tee_printf("  %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
                     }
                     tee_printf("  => %d hops, reached=%s, max_rtt_jump=%dms, long_hops>150ms=%d\n",
-                           tr.hop_count, tr.reached_target ? "yes" : "no",
-                           tr.max_rtt_jump_ms, tr.long_hops);
+                               tr.hop_count, tr.reached_target ? "yes" : "no", tr.max_rtt_jump_ms, tr.long_hops);
                 }
             }
             pause_for_enter();
+            continue;
         }
     }
 }
 
+} // namespace
+
 int main(int argc, char** argv) {
     enable_vt();
 #ifdef _WIN32
-    WSADATA ws; WSAStartup(MAKEWORD(2,2), &ws);
+    WSADATA ws;
+    WSAStartup(MAKEWORD(2, 2), &ws);
 #endif
+
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_library_init(); SSL_load_error_strings();
+    SSL_library_init();
+    SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
 #endif
 
     vector<string> pos;
-    for (int i=1;i<argc;++i) {
-        string a = argv[i];
+    for (int i = 1; i < argc; ++i) {
+        const string a = argv[i];
         if (a == "--no-color") g_no_color = true;
         else if (a == "--verbose" || a == "-v") g_verbose = true;
-        else if (a == "--threads" && i+1<argc) g_threads = parse_int_fatal(argv[++i], "--threads", 1, 10000);
-        else if (a == "--tcp-to" && i+1<argc)  g_tcp_to  = parse_int_fatal(argv[++i], "--tcp-to", 1, 60000);
-        else if (a == "--udp-to" && i+1<argc)  g_udp_to  = parse_int_fatal(argv[++i], "--udp-to", 1, 60000);
+        else if (a == "--threads" && i + 1 < argc) g_threads = parse_int_fatal(argv[++i], "--threads", 1, 10000);
+        else if (a == "--tcp-to" && i + 1 < argc) g_tcp_to = parse_int_fatal(argv[++i], "--tcp-to", 1, 60000);
+        else if (a == "--udp-to" && i + 1 < argc) g_udp_to = parse_int_fatal(argv[++i], "--udp-to", 1, 60000);
         else if (a == "--stealth") {
             g_stealth = true;
             g_no_geoip = true;
             g_no_ct = true;
             g_udp_jitter = true;
         }
-        else if (a == "--no-geoip")  g_no_geoip = true;
-        else if (a == "--no-ct")     g_no_ct = true;
+        else if (a == "--no-geoip") g_no_geoip = true;
+        else if (a == "--no-ct") g_no_ct = true;
         else if (a == "--use-ip-api") g_use_ip_api = true;
         else if (a == "--udp-jitter") g_udp_jitter = true;
         else if (a == "--save") {
             g_save_requested = true;
             if (i + 1 < argc) {
-                string nxt = argv[i + 1];
+                const string nxt = argv[i + 1];
                 if (!nxt.empty() && nxt[0] != '-') {
                     g_save_path = nxt;
                     ++i;
                 }
             }
         }
-        else if (a == "--full")  g_port_mode = PortMode::FULL;
-        else if (a == "--fast")  g_port_mode = PortMode::FAST;
-        else if (a == "--range" && i+1<argc) {
-            string v = argv[++i];
-            size_t dash = v.find('-');
+        else if (a == "--full") g_port_mode = PortMode::FULL;
+        else if (a == "--fast") g_port_mode = PortMode::FAST;
+        else if (a == "--range" && i + 1 < argc) {
+            const string v = argv[++i];
+            const size_t dash = v.find('-');
             if (dash != string::npos) {
                 g_range_lo = parse_int_fatal(v.substr(0, dash).c_str(), "range start", 1, 65535);
-                g_range_hi = parse_int_fatal(v.substr(dash+1).c_str(), "range end", 1, 65535);
+                g_range_hi = parse_int_fatal(v.substr(dash + 1).c_str(), "range end", 1, 65535);
                 if (g_range_lo > g_range_hi) {
                     fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
-                    exit(1);
+                    return 1;
                 }
                 g_port_mode = PortMode::RANGE;
             }
         }
-        else if (a == "--ports" && i+1<argc) {
-            string v = argv[++i]; g_port_list.clear();
+        else if (a == "--ports" && i + 1 < argc) {
+            const string v = argv[++i];
+            g_port_list.clear();
             size_t p = 0;
             while (p < v.size()) {
-                size_t c = v.find(',', p);
-                string tok = v.substr(p, c==string::npos?string::npos:c-p);
+                const size_t c = v.find(',', p);
+                const string tok = v.substr(p, c == string::npos ? string::npos : c - p);
                 if (!tok.empty()) g_port_list.push_back(parse_int_fatal(tok.c_str(), "port list entry", 1, 65535));
-                if (c==string::npos) break;
-                p = c+1;
+                if (c == string::npos) break;
+                p = c + 1;
             }
             if (!g_port_list.empty()) g_port_mode = PortMode::LIST;
         }
-        else if (a == "--help" || a == "-h" || a == "/?") { help(); return 0; }
-        else pos.push_back(a);
+        else if (a == "--help" || a == "-h" || a == "/?") {
+            help();
+            return 0;
+        }
+        else {
+            pos.push_back(a);
+        }
     }
 
     if (g_save_requested) {
-        string target = extract_target_arg(pos);
+        const string target = extract_target_arg(pos);
         string path = g_save_path;
         if (path.empty()) path = default_save_path_for_target(target);
         g_save_fp = fopen(path.c_str(), "w");
@@ -434,74 +521,97 @@ int main(int argc, char** argv) {
                     path.c_str(), strerror(errno));
         } else {
             g_save_path = path;
-            time_t now = time(nullptr);
-            struct tm* lt = localtime(&now);
+            const time_t now = time(nullptr);
+            const struct tm* lt = localtime(&now);
             fprintf(g_save_fp, "# Scan report\n\n");
-            if (lt) fprintf(g_save_fp,
-                            "**Date:** %04d-%02d-%02d %02d:%02d:%02d  \n",
-                            1900 + lt->tm_year, 1 + lt->tm_mon, lt->tm_mday,
-                            lt->tm_hour, lt->tm_min, lt->tm_sec);
-            if (!target.empty())
-                fprintf(g_save_fp, "**Target:** `%s`  \n", target.c_str());
-            fprintf(g_save_fp, "**Scanner version:** v2.5.7  \n\n");
+            if (lt) {
+                fprintf(g_save_fp,
+                        "**Date:** %04d-%02d-%02d %02d:%02d:%02d  \n",
+                        1900 + lt->tm_year, 1 + lt->tm_mon, lt->tm_mday,
+                        lt->tm_hour, lt->tm_min, lt->tm_sec);
+            }
+            if (!target.empty()) fprintf(g_save_fp, "**Target:** `%s`  \n", target.c_str());
+            fprintf(g_save_fp, "**Scanner version:** v3.0.0  \n\n");
             fprintf(g_save_fp, "```\n");
         }
     }
 
     banner();
     int rc = 0;
+
     if (pos.empty()) {
         interactive();
     } else {
-        string cmd = pos[0];
+        const string cmd = pos[0];
+
         if (cmd == "scan" || cmd == "full") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
             run_full_target(pos[1]);
         } else if (cmd == "ports") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
-            auto rs = resolve_host(pos[1]);
-            auto op = scan_tcp(rs.primary_ip.empty()?pos[1]:rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
-            for (auto& o: op) tee_printf("  :%-5d  %lldms  %s\n", o.port, o.connect_ms, port_hint(o.port));
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
+            const auto rs = resolve_host(pos[1]);
+            const auto op = scan_tcp(rs.primary_ip.empty() ? pos[1] : rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
+            for (const auto& o : op) {
+                tee_printf("  :%-5d  %lldms  %s\n", o.port, o.connect_ms, port_hint(o.port));
+            }
         } else if (cmd == "udp") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
-            auto rs = resolve_host(pos[1]); string ip = rs.primary_ip.empty()?pos[1]:rs.primary_ip;
-            auto show=[&](const char*n,int p,UdpResult u){
-                tee_printf("  UDP:%-5d  %-22s  %s\n", p, n,
-                    u.responded?("RESP "+std::to_string(u.bytes)+"B "+u.reply_hex).c_str()
-                                :("no answer ("+u.err+")").c_str());
-            };
-            show("DNS",       53,    dns_probe(ip,53));
-            show("IKEv2",     500,   ike_probe(ip,500));
-            show("IKE NAT-T", 4500,  ike_probe(ip,4500));
-            show("OpenVPN",   1194,  openvpn_probe(ip,1194));
-            show("QUIC",      443,   quic_probe(ip,443));
-            show("WireGuard", 51820, wireguard_probe(ip,51820));
-            show("Tailscale", 41641, wireguard_probe(ip,41641));
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
+            const auto rs = resolve_host(pos[1]);
+            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            show_udp_wg(ip);
         } else if (cmd == "tls") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
             int port = 443;
             if (pos.size() >= 3 && !try_parse_int(pos[2], port, 1, 65535)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
-                rc = 2; goto done;
+                rc = 2;
+                goto done;
             }
-            auto rs = resolve_host(pos[1]);
-            string ip = rs.primary_ip.empty()?pos[1]:rs.primary_ip;
-            auto tp = tls_probe(ip, port, pos[1]);
-            if (!tp.ok) { tee_printf("TLS fail: %s\n", tp.err.c_str()); rc = 1; goto done; }
+            const auto rs = resolve_host(pos[1]);
+            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            const auto tp = tls_probe(ip, port, pos[1]);
+            if (!tp.ok) {
+                tee_printf("TLS fail: %s\n", tp.err.c_str());
+                rc = 1;
+                goto done;
+            }
             tee_printf("  %s / %s / ALPN=%s / %s / %lldms\n",
-                   tp.version.c_str(), tp.cipher.c_str(), tp.alpn.c_str(),
-                   tp.group.c_str(), tp.handshake_ms);
+                       tp.version.c_str(), tp.cipher.c_str(), tp.alpn.c_str(), tp.group.c_str(), tp.handshake_ms);
             tee_printf("  cert:   %s\n", tp.cert_subject.c_str());
             tee_printf("  issuer: %s\n", tp.cert_issuer.c_str());
             tee_printf("  sha256: %s\n", tp.cert_sha256.c_str());
-            auto sc = sni_consistency(ip, port, pos[1]);
-            for (auto& e: sc.entries)
-                tee_printf("    %-35s  %s  %s\n", e.sni.c_str(),
-                       e.ok ? ("sha:"+e.sha.substr(0,16)).c_str() : "fail",
-                       (e.ok && e.sha == sc.base_sha) ? "SAME" : "diff");
+
+            const auto sc = sni_consistency(ip, port, pos[1]);
+            for (const auto& e : sc.entries) {
+#if BYEBYEVPN_HAS_STD_FORMAT
+                const std::string sha = e.ok ? std::format("sha:{}", e.sha.substr(0, 16)) : "fail";
+#else
+                const std::string sha = e.ok ? ("sha:" + e.sha.substr(0, 16)) : "fail";
+#endif
+                tee_printf("    %-35s  %s  %s\n",
+                           e.sni.c_str(),
+                           sha.c_str(),
+                           (e.ok && e.sha == sc.base_sha) ? "SAME" : "diff");
+            }
+
             if (sc.reality_like)
-                tee_printf("  => Reality/XTLS pattern (cert covers foreign SNI '%s')\n",
-                       sc.matched_foreign_sni.c_str());
+                tee_printf("  => Reality/XTLS pattern (cert covers foreign SNI '%s')\n", sc.matched_foreign_sni.c_str());
             else if (sc.default_cert_only)
                 tee_printf("  => plain TLS server with single default cert (NOT Reality)\n");
             else if (sc.same_cert_always)
@@ -509,29 +619,39 @@ int main(int argc, char** argv) {
             else
                 tee_printf("  => cert varies per SNI (multi-tenant TLS, NOT Reality)\n");
         } else if (cmd == "j3") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
             int port = 443;
             if (pos.size() >= 3 && !try_parse_int(pos[2], port, 1, 65535)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
-                rc = 2; goto done;
+                rc = 2;
+                goto done;
             }
-            auto rs = resolve_host(pos[1]); string ip = rs.primary_ip.empty()?pos[1]:rs.primary_ip;
-            auto probes = j3_probes(ip, port);
-            for (auto& p: probes)
-                tee_printf("  %-28s  %s  %dB %s\n", p.name.c_str(),
-                    p.responded?"RESP":"SILENT", p.bytes,
-                    p.responded ? printable_prefix(p.first_line,60).c_str() : "(dropped)");
+            const auto rs = resolve_host(pos[1]);
+            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            const auto probes = j3_probes(ip, port);
+            for (const auto& p : probes) {
+                tee_printf("  %-28s  %s  %dB %s\n",
+                           p.name.c_str(),
+                           p.responded ? "RESP" : "SILENT",
+                           p.bytes,
+                           p.responded ? printable_prefix(p.first_line, 60).c_str() : "(dropped)");
+            }
         } else if (cmd == "geoip") {
-            string ip = pos.size()>=2 ? pos[1] : "";
-            auto f1 = std::async(std::launch::async, geo_ipapi_is,   ip);   
-            auto f2 = std::async(std::launch::async, geo_iplocate,   ip);
-            auto f3 = std::async(std::launch::async, geo_freeipapi,  ip);
-            auto f4 = std::async(std::launch::async, geo_2ip_ru,     ip);   
-            auto f5 = std::async(std::launch::async, geo_ipapi_ru,   ip);
-            auto f6 = std::async(std::launch::async, geo_sypex,      ip);
-            auto f7 = std::async(std::launch::async, geo_ip_api_com, ip);   
-            auto f8 = std::async(std::launch::async, geo_ipwho_is,   ip);
-            auto f9 = std::async(std::launch::async, geo_ipinfo_io,  ip);
+            const string ip = pos.size() >= 2 ? pos[1] : "";
+            auto f1 = std::async(std::launch::async, geo_ipapi_is, ip);
+            auto f2 = std::async(std::launch::async, geo_iplocate, ip);
+            auto f3 = std::async(std::launch::async, geo_freeipapi, ip);
+            auto f4 = std::async(std::launch::async, geo_2ip_ru, ip);
+            auto f5 = std::async(std::launch::async, geo_ipapi_ru, ip);
+            auto f6 = std::async(std::launch::async, geo_sypex, ip);
+            auto f7 = std::async(std::launch::async, geo_ip_api_com, ip);
+            auto f8 = std::async(std::launch::async, geo_ipwho_is, ip);
+            auto f9 = std::async(std::launch::async, geo_ipinfo_io, ip);
+
             tee_printf("  %s-- EU --%s\n", col(C::BOLD), col(C::RST));
             print_geo(safe_get_geo(f1, "ipapi.is"));
             print_geo(safe_get_geo(f2, "iplocate.io"));
@@ -544,53 +664,64 @@ int main(int argc, char** argv) {
             print_geo(safe_get_geo(f7, "ip-api.com"));
             print_geo(safe_get_geo(f8, "ipwho.is"));
             print_geo(safe_get_geo(f9, "ipinfo.io"));
-        } else if (cmd == "local" || cmd == "me" || cmd == "self") {
-            run_local_analysis();
         } else if (cmd == "snitch") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
             int port = 443;
             if (pos.size() >= 3 && !try_parse_int(pos[2], port, 1, 65535)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
-                rc = 2; goto done;
+                rc = 2;
+                goto done;
             }
-            auto rs = resolve_host(pos[1]);
-            string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
-            auto g = geo_ip_api_com(ip);
-            string cc = g.country_code;
-            auto sn = snitch_check(ip, port, cc, g_observer_cc);
-            tee_printf("  target=%s  port=%d  geoip=%s  asn=%s\n",
-                   ip.c_str(), port, cc.c_str(), g.asn_org.c_str());
+            const auto rs = resolve_host(pos[1]);
+            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            const auto g = geo_ip_api_com(ip);
+            const string cc = g.country_code;
+            const auto sn = snitch_check(ip, port, cc, g_observer_cc);
+            tee_printf("  target=%s  port=%d  geoip=%s  asn=%s\n", ip.c_str(), port, cc.c_str(), g.asn_org.c_str());
             tee_printf("  median=%.1fms  min=%.1fms  max=%.1fms  stddev=%.1fms  samples=%d\n",
-                   sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
+                       sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
             tee_printf("  anchors: cf=%.1fms  google=%.1fms  yandex=%.1fms\n",
-                   sn.cf_median_ms, sn.google_median_ms, sn.yandex_median_ms);
+                       sn.cf_median_ms, sn.google_median_ms, sn.yandex_median_ms);
             tee_printf("  expected-min for %s = %.0fms\n", cc.c_str(), sn.expected_min_ms);
             tee_printf("  => %s\n", sn.summary.c_str());
         } else if (cmd == "trace" || cmd == "traceroute") {
-            if (pos.size() < 2) { tee_printf("need target\n"); rc = 2; goto done; }
-            auto rs = resolve_host(pos[1]);
-            string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            if (pos.size() < 2) {
+                tee_printf("need target\n");
+                rc = 2;
+                goto done;
+            }
+            const auto rs = resolve_host(pos[1]);
+            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
             int maxh = 18;
             if (pos.size() >= 3 && !try_parse_int(pos[2], maxh, 1, 255)) {
                 fprintf(stderr, "Error: invalid max hops '%s' (expected 1-255)\n", pos[2].c_str());
-                rc = 2; goto done;
+                rc = 2;
+                goto done;
             }
-            auto tr = trace_hops(ip, maxh);
-            if (!tr.ok) { tee_printf("  no hops returned\n"); rc = 1; goto done; }
-            for (auto& h: tr.hops) {
+            const auto tr = trace_hops(ip, maxh);
+            if (!tr.ok) {
+                tee_printf("  no hops returned\n");
+                rc = 1;
+                goto done;
+            }
+            for (const auto& h : tr.hops) {
                 if (h.rtt_ms < 0) tee_printf("  %2d  *\n", h.ttl);
-                else              tee_printf("  %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
+                else tee_printf("  %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
             }
             tee_printf("  => %d hops, reached=%s, max_rtt_jump=%dms, long_hops>150ms=%d\n",
-                   tr.hop_count, tr.reached_target?"yes":"no",
-                   tr.max_rtt_jump_ms, tr.long_hops);
-        } else if (cmd == "help" || cmd == "--help") {
+                       tr.hop_count, tr.reached_target ? "yes" : "no", tr.max_rtt_jump_ms, tr.long_hops);
+        } else if (cmd == "help") {
             help();
         } else {
             run_full_target(cmd);
         }
     }
-done:
+
+ done:
     if (g_save_fp) {
         fprintf(g_save_fp, "```\n");
         fclose(g_save_fp);
@@ -607,5 +738,6 @@ done:
 #ifdef _WIN32
     WSACleanup();
 #endif
+
     return rc;
 }

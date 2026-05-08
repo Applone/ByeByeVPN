@@ -6,7 +6,6 @@
 #include "tcp_scanner.h"
 
 std::vector<int> build_tcp_ports();
-extern const std::vector<int> UDP_SCAN_PORTS;
 
 const char* port_hint(int p);
 

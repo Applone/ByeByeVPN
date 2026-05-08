@@ -20,6 +20,5 @@ FpResult fp_http_plain(const std::string& host, int port);
 FpResult fp_ssh(const std::string& banner_hint, const std::string& host, int port);
 FpResult fp_socks5(const std::string& host, int port);
 FpResult fp_http_connect(const std::string& host, int port);
-FpResult fp_shadowsocks(const std::string& host, int port);
 
 #endif // NETWORK_SERVICE_PROBES_H
