@@ -363,7 +363,7 @@ bool bind_connectex_socket(SOCKET s, int family) {
 }
 
 LPFN_CONNECTEX load_connectex_ptr(int family) {
-    SOCKET tmp = WSASocket(family, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
+    SOCKET tmp = WSASocketW(family, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
     if (tmp == INVALID_SOCKET) return nullptr;
 
     GUID guid = WSAID_CONNECTEX;
@@ -434,7 +434,7 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
         set_port(dst, port);
 
         auto conn = std::make_unique<IocpConn>();
-        conn->sock = WSASocket(dst.ss_family, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
+        conn->sock = WSASocketW(dst.ss_family, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
         conn->port = port;
         conn->started = Clock::now();
 
