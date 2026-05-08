@@ -1,7 +1,5 @@
 #include "analysis/geoip.h"
 #include "analysis/sni_consistency.h"
-#include "analysis/snitch.h"
-#include "analysis/traceroute.h"
 #include "cli/orchestrator.h"
 #include "core/utils.h"
 #include "network/dns.h"
@@ -56,7 +54,7 @@ int parse_int_fatal(const char* s, const char* name, const int min_v, const int 
 string extract_target_arg(const vector<string>& pos) {
     if (pos.empty()) return {};
     static const set<string> cmds = {
-        "scan", "full", "ports", "udp", "tls", "j3", "geoip", "snitch", "trace", "traceroute", "help"
+        "scan", "full", "ports", "udp", "tls", "j3", "geoip", "help"
     };
     if (pos.size() >= 2 && cmds.count(pos[0])) {
         if (pos[0] == "help") return {};
@@ -149,9 +147,7 @@ void help() {
     tee_printf("  byebyevpn udp <ip>             UDP WG/AWG probes only\n");
     tee_printf("  byebyevpn tls <ip> [port]      TLS + SNI consistency only\n");
     tee_printf("  byebyevpn j3 <ip> [port]       active junk probing only\n");
-    tee_printf("  byebyevpn geoip <ip>           GeoIP only\n");
-    tee_printf("  byebyevpn snitch <ip> [port]   SNITCH RTT/GeoIP consistency\n");
-    tee_printf("  byebyevpn trace <ip>           traceroute hop analysis\n\n");
+    tee_printf("  byebyevpn geoip <ip>           GeoIP only\n\n");
 
     tee_printf("Port-scan modes (default: --full):\n");
     tee_printf("  --full              scan ALL ports 1-65535  (default)\n");
@@ -170,7 +166,6 @@ void help() {
     tee_printf("  --stealth       enable --no-geoip + --no-ct + --udp-jitter\n");
     tee_printf("  --no-geoip      skip all 3rd-party GeoIP lookups\n");
     tee_printf("  --no-ct         skip crt.sh CT lookup\n");
-    tee_printf("  --use-ip-api    allow HTTP-only ip-api.com lookups (default OFF)\n");
     tee_printf("  --udp-jitter    add random delay between UDP probes\n\n");
 
     tee_printf("Save scan output:\n");
@@ -224,8 +219,6 @@ void interactive() {
         tee_printf("  %s[4]%s  TLS + SNI consistency — Reality discriminator\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[5]%s  J3 active probing     — active junk probes\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[6]%s  GeoIP lookup          — country / ASN aggregation\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[7]%s  SNITCH latency check  — RTT + GeoIP consistency\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[8]%s  Traceroute            — ICMP hop analysis\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[0]%s  Exit\n\n", col(C::CYN), col(C::RST));
 
         const string s = ask("  > ");
@@ -356,11 +349,9 @@ void interactive() {
             auto f2 = std::async(std::launch::async, geo_iplocate, t);
             auto f3 = std::async(std::launch::async, geo_freeipapi, t);
             auto f4 = std::async(std::launch::async, geo_2ip_ru, t);
-            auto f5 = std::async(std::launch::async, geo_ipapi_ru, t);
-            auto f6 = std::async(std::launch::async, geo_sypex, t);
-            auto f7 = std::async(std::launch::async, geo_ip_api_com, t);
-            auto f8 = std::async(std::launch::async, geo_ipwho_is, t);
-            auto f9 = std::async(std::launch::async, geo_ipinfo_io, t);
+            auto f5 = std::async(std::launch::async, geo_sypex, t);
+            auto f6 = std::async(std::launch::async, geo_ipwho_is, t);
+            auto f7 = std::async(std::launch::async, geo_ipinfo_io, t);
 
             tee_printf("  %s-- EU --%s\n", col(C::BOLD), col(C::RST));
             print_geo(safe_get_geo(f1, "ipapi.is"));
@@ -368,63 +359,11 @@ void interactive() {
             print_geo(safe_get_geo(f3, "freeipapi.com"));
             tee_printf("  %s-- RU --%s\n", col(C::BOLD), col(C::RST));
             print_geo(safe_get_geo(f4, "2ip.ru"));
-            print_geo(safe_get_geo(f5, "ip-api.com/ru"));
-            print_geo(safe_get_geo(f6, "sypexgeo.net"));
+            print_geo(safe_get_geo(f5, "sypexgeo.net"));
             tee_printf("  %s-- global --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(safe_get_geo(f7, "ip-api.com"));
-            print_geo(safe_get_geo(f8, "ipwho.is"));
-            print_geo(safe_get_geo(f9, "ipinfo.io"));
+            print_geo(safe_get_geo(f6, "ipwho.is"));
+            print_geo(safe_get_geo(f7, "ipinfo.io"));
 
-            pause_for_enter();
-            continue;
-        }
-
-        if (c == '7') {
-            const string t = ask("  target IP or host: ");
-            const string ps = ask("  TCP port (default 443): ");
-            int port = 443;
-            if (!ps.empty() && !try_parse_int(ps, port, 1, 65535)) {
-                tee_printf("  %serror: invalid port '%s', using default 443%s\n", col(C::RED), ps.c_str(), col(C::RST));
-            }
-            if (!t.empty()) {
-                const auto rs = resolve_host(t);
-                const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
-                const auto g = geo_ip_api_com(ip);
-                const string cc = g.country_code;
-                const auto sn = snitch_check(ip, port, cc, g_observer_cc);
-                tee_printf("  Country (ip-api.com): %s  /  Target port: %d\n", cc.c_str(), port);
-                tee_printf("  median=%.1fms  min=%.1fms  max=%.1fms  stddev=%.1fms  samples=%d\n",
-                           sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
-                tee_printf("  Anchors:  Cloudflare=%.1fms  Google=%.1fms  Yandex=%.1fms\n",
-                           sn.cf_median_ms, sn.google_median_ms, sn.yandex_median_ms);
-                tee_printf("  Expected physical_min for %s: %.0fms\n", cc.c_str(), sn.expected_min_ms);
-                tee_printf("  %s%s%s\n",
-                           (sn.too_low || sn.too_high) ? col(C::RED)
-                                                       : (sn.high_jitter || sn.anchor_ratio_off) ? col(C::YEL)
-                                                                                                  : col(C::GRN),
-                           sn.summary.c_str(), col(C::RST));
-            }
-            pause_for_enter();
-            continue;
-        }
-
-        if (c == '8') {
-            const string t = ask("  target IP or host: ");
-            if (!t.empty()) {
-                const auto rs = resolve_host(t);
-                const string ip = rs.primary_ip.empty() ? t : rs.primary_ip;
-                const auto tr = trace_hops(ip, 20);
-                if (!tr.ok) {
-                    tee_printf("  no hops returned (ICMP filtered)\n");
-                } else {
-                    for (const auto& h : tr.hops) {
-                        if (h.rtt_ms < 0) tee_printf("  %2d  *\n", h.ttl);
-                        else tee_printf("  %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
-                    }
-                    tee_printf("  => %d hops, reached=%s, max_rtt_jump=%dms, long_hops>150ms=%d\n",
-                               tr.hop_count, tr.reached_target ? "yes" : "no", tr.max_rtt_jump_ms, tr.long_hops);
-                }
-            }
             pause_for_enter();
             continue;
         }
@@ -433,11 +372,19 @@ void interactive() {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main_impl(int argc, char** argv) {
     enable_vt();
+
+    bool wsa_started = false;
 #ifdef _WIN32
-    WSADATA ws;
-    WSAStartup(MAKEWORD(2, 2), &ws);
+    WSADATA ws{};
+    const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &ws);
+    if (wsa_rc != 0) {
+        fprintf(stderr, "fatal: WSAStartup failed: %d\n", wsa_rc);
+        fflush(stderr);
+        return 2;
+    }
+    wsa_started = true;
 #endif
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -459,12 +406,15 @@ int main(int argc, char** argv) {
             g_no_geoip = true;
             g_no_ct = true;
             g_udp_jitter = true;
-        }
-        else if (a == "--no-geoip") g_no_geoip = true;
-        else if (a == "--no-ct") g_no_ct = true;
-        else if (a == "--use-ip-api") g_use_ip_api = true;
-        else if (a == "--udp-jitter") g_udp_jitter = true;
-        else if (a == "--save") {
+        } else if (a == "--no-geoip") {
+            g_no_geoip = true;
+        } else if (a == "--no-ct") {
+            g_no_ct = true;
+        } else if (a == "--use-ip-api") {
+            fprintf(stderr, "warn: --use-ip-api is deprecated; only HTTPS GeoIP providers are used now\n");
+        } else if (a == "--udp-jitter") {
+            g_udp_jitter = true;
+        } else if (a == "--save") {
             g_save_requested = true;
             if (i + 1 < argc) {
                 const string nxt = argv[i + 1];
@@ -473,10 +423,11 @@ int main(int argc, char** argv) {
                     ++i;
                 }
             }
-        }
-        else if (a == "--full") g_port_mode = PortMode::FULL;
-        else if (a == "--fast") g_port_mode = PortMode::FAST;
-        else if (a == "--range" && i + 1 < argc) {
+        } else if (a == "--full") {
+            g_port_mode = PortMode::FULL;
+        } else if (a == "--fast") {
+            g_port_mode = PortMode::FAST;
+        } else if (a == "--range" && i + 1 < argc) {
             const string v = argv[++i];
             const size_t dash = v.find('-');
             if (dash != string::npos) {
@@ -484,12 +435,12 @@ int main(int argc, char** argv) {
                 g_range_hi = parse_int_fatal(v.substr(dash + 1).c_str(), "range end", 1, 65535);
                 if (g_range_lo > g_range_hi) {
                     fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
+                    fflush(stderr);
                     return 1;
                 }
                 g_port_mode = PortMode::RANGE;
             }
-        }
-        else if (a == "--ports" && i + 1 < argc) {
+        } else if (a == "--ports" && i + 1 < argc) {
             const string v = argv[++i];
             g_port_list.clear();
             size_t p = 0;
@@ -501,12 +452,11 @@ int main(int argc, char** argv) {
                 p = c + 1;
             }
             if (!g_port_list.empty()) g_port_mode = PortMode::LIST;
-        }
-        else if (a == "--help" || a == "-h" || a == "/?") {
+        } else if (a == "--help" || a == "-h" || a == "/?") {
             help();
+            fflush(stdout);
             return 0;
-        }
-        else {
+        } else {
             pos.push_back(a);
         }
     }
@@ -646,11 +596,9 @@ int main(int argc, char** argv) {
             auto f2 = std::async(std::launch::async, geo_iplocate, ip);
             auto f3 = std::async(std::launch::async, geo_freeipapi, ip);
             auto f4 = std::async(std::launch::async, geo_2ip_ru, ip);
-            auto f5 = std::async(std::launch::async, geo_ipapi_ru, ip);
-            auto f6 = std::async(std::launch::async, geo_sypex, ip);
-            auto f7 = std::async(std::launch::async, geo_ip_api_com, ip);
-            auto f8 = std::async(std::launch::async, geo_ipwho_is, ip);
-            auto f9 = std::async(std::launch::async, geo_ipinfo_io, ip);
+            auto f5 = std::async(std::launch::async, geo_sypex, ip);
+            auto f6 = std::async(std::launch::async, geo_ipwho_is, ip);
+            auto f7 = std::async(std::launch::async, geo_ipinfo_io, ip);
 
             tee_printf("  %s-- EU --%s\n", col(C::BOLD), col(C::RST));
             print_geo(safe_get_geo(f1, "ipapi.is"));
@@ -658,62 +606,10 @@ int main(int argc, char** argv) {
             print_geo(safe_get_geo(f3, "freeipapi.com"));
             tee_printf("  %s-- RU --%s\n", col(C::BOLD), col(C::RST));
             print_geo(safe_get_geo(f4, "2ip.ru"));
-            print_geo(safe_get_geo(f5, "ip-api.com/ru"));
-            print_geo(safe_get_geo(f6, "sypexgeo.net"));
+            print_geo(safe_get_geo(f5, "sypexgeo.net"));
             tee_printf("  %s-- global --%s\n", col(C::BOLD), col(C::RST));
-            print_geo(safe_get_geo(f7, "ip-api.com"));
-            print_geo(safe_get_geo(f8, "ipwho.is"));
-            print_geo(safe_get_geo(f9, "ipinfo.io"));
-        } else if (cmd == "snitch") {
-            if (pos.size() < 2) {
-                tee_printf("need target\n");
-                rc = 2;
-                goto done;
-            }
-            int port = 443;
-            if (pos.size() >= 3 && !try_parse_int(pos[2], port, 1, 65535)) {
-                fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
-                rc = 2;
-                goto done;
-            }
-            const auto rs = resolve_host(pos[1]);
-            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
-            const auto g = geo_ip_api_com(ip);
-            const string cc = g.country_code;
-            const auto sn = snitch_check(ip, port, cc, g_observer_cc);
-            tee_printf("  target=%s  port=%d  geoip=%s  asn=%s\n", ip.c_str(), port, cc.c_str(), g.asn_org.c_str());
-            tee_printf("  median=%.1fms  min=%.1fms  max=%.1fms  stddev=%.1fms  samples=%d\n",
-                       sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
-            tee_printf("  anchors: cf=%.1fms  google=%.1fms  yandex=%.1fms\n",
-                       sn.cf_median_ms, sn.google_median_ms, sn.yandex_median_ms);
-            tee_printf("  expected-min for %s = %.0fms\n", cc.c_str(), sn.expected_min_ms);
-            tee_printf("  => %s\n", sn.summary.c_str());
-        } else if (cmd == "trace" || cmd == "traceroute") {
-            if (pos.size() < 2) {
-                tee_printf("need target\n");
-                rc = 2;
-                goto done;
-            }
-            const auto rs = resolve_host(pos[1]);
-            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
-            int maxh = 18;
-            if (pos.size() >= 3 && !try_parse_int(pos[2], maxh, 1, 255)) {
-                fprintf(stderr, "Error: invalid max hops '%s' (expected 1-255)\n", pos[2].c_str());
-                rc = 2;
-                goto done;
-            }
-            const auto tr = trace_hops(ip, maxh);
-            if (!tr.ok) {
-                tee_printf("  no hops returned\n");
-                rc = 1;
-                goto done;
-            }
-            for (const auto& h : tr.hops) {
-                if (h.rtt_ms < 0) tee_printf("  %2d  *\n", h.ttl);
-                else tee_printf("  %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
-            }
-            tee_printf("  => %d hops, reached=%s, max_rtt_jump=%dms, long_hops>150ms=%d\n",
-                       tr.hop_count, tr.reached_target ? "yes" : "no", tr.max_rtt_jump_ms, tr.long_hops);
+            print_geo(safe_get_geo(f6, "ipwho.is"));
+            print_geo(safe_get_geo(f7, "ipinfo.io"));
         } else if (cmd == "help") {
             help();
         } else {
@@ -736,8 +632,26 @@ int main(int argc, char** argv) {
 #endif
 
 #ifdef _WIN32
-    WSACleanup();
+    if (wsa_started) WSACleanup();
 #endif
 
+    fflush(stdout);
+    fflush(stderr);
     return rc;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return main_impl(argc, argv);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "fatal: %s\n", e.what());
+        fflush(stdout);
+        fflush(stderr);
+        return 1;
+    } catch (...) {
+        fprintf(stderr, "fatal: unknown exception\n");
+        fflush(stdout);
+        fflush(stderr);
+        return 1;
+    }
 }

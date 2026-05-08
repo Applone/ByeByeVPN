@@ -1,6 +1,5 @@
 #include "ct_check.h"
 #include "../network/http_client.h"
-#include "../core/utils.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>

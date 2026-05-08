@@ -1,17 +1,24 @@
 #include "port_scan.h"
+
 #include "../core/utils.h"
-#include <mutex>
-#include <thread>
-#include <atomic>
+#include "tcp_scanner.h"
+
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <conio.h>
 #else
+#include <poll.h>
 inline bool _kbhit() { return false; }
 inline int _getch() { return 0; }
 #endif
+
+namespace {
 
 static const std::vector<int> TCP_FAST_PORTS = {
     22, 80, 81, 443,
@@ -32,149 +39,350 @@ static const std::vector<int> TCP_FAST_PORTS = {
     62078
 };
 
+struct PendingConn {
+    SOCKET sock = INVALID_SOCKET;
+    int port = 0;
+    std::chrono::steady_clock::time_point started{};
+};
+
+#ifdef _WIN32
+using PollFd = WSAPOLLFD;
+
+int os_poll(PollFd* fds, size_t count, int timeout_ms) {
+    return WSAPoll(fds, static_cast<ULONG>(count), timeout_ms);
+}
+#else
+using PollFd = pollfd;
+
+int os_poll(PollFd* fds, size_t count, int timeout_ms) {
+    return poll(fds, count, timeout_ms);
+}
+#endif
+
+bool resolve_scan_target(const std::string& host, sockaddr_storage& out_addr, socklen_t& out_len) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    addrinfo* ai = nullptr;
+    if (getaddrinfo(host.c_str(), "1", &hints, &ai) != 0 || !ai) {
+        return false;
+    }
+
+    addrinfo* chosen = nullptr;
+    for (auto* p = ai; p; p = p->ai_next) {
+        if (p->ai_family == AF_INET) {
+            chosen = p;
+            break;
+        }
+    }
+    if (!chosen) {
+        for (auto* p = ai; p; p = p->ai_next) {
+            if (p->ai_family == AF_INET6) {
+                chosen = p;
+                break;
+            }
+        }
+    }
+
+    if (!chosen) {
+        freeaddrinfo(ai);
+        return false;
+    }
+
+    std::memset(&out_addr, 0, sizeof(out_addr));
+    std::memcpy(&out_addr, chosen->ai_addr, chosen->ai_addrlen);
+    out_len = static_cast<socklen_t>(chosen->ai_addrlen);
+
+    freeaddrinfo(ai);
+    return true;
+}
+
+void set_port(sockaddr_storage& addr, int port) {
+    if (addr.ss_family == AF_INET) {
+        reinterpret_cast<sockaddr_in*>(&addr)->sin_port = htons(static_cast<uint16_t>(port));
+    } else if (addr.ss_family == AF_INET6) {
+        reinterpret_cast<sockaddr_in6*>(&addr)->sin6_port = htons(static_cast<uint16_t>(port));
+    }
+}
+
+void read_banner_quick(SOCKET s, std::string& banner) {
+    char buf[512];
+    int n = tcp_recv_to(s, buf, static_cast<int>(sizeof(buf)) - 1, 180);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    banner.assign(buf, n);
+    while (!banner.empty() && (banner.back() == '\r' || banner.back() == '\n' || banner.back() == '\0')) {
+        banner.pop_back();
+    }
+}
+
+bool is_connect_in_progress_error(int err) {
+#ifndef _WIN32
+    if (err == EINPROGRESS) err = WSAEWOULDBLOCK;
+#endif
+    return err == WSAEWOULDBLOCK;
+}
+
+} // namespace
+
 std::vector<int> build_tcp_ports() {
     std::vector<int> p;
     switch (g_port_mode) {
         case PortMode::FAST:
-            p = TCP_FAST_PORTS; break;
+            p = TCP_FAST_PORTS;
+            break;
         case PortMode::RANGE: {
-            int lo = std::max(1,  g_range_lo);
-            int hi = std::min(65535, g_range_hi);
+            const int lo = std::max(1, g_range_lo);
+            const int hi = std::min(65535, g_range_hi);
             if (hi < lo) break;
-            p.reserve((size_t)hi - lo + 1);
-            for (int i=lo; i<=hi; ++i) p.push_back(i);
-        } break;
+            p.reserve(static_cast<size_t>(hi - lo + 1));
+            for (int i = lo; i <= hi; ++i) p.push_back(i);
+            break;
+        }
         case PortMode::LIST:
-            p = g_port_list; break;
+            p = g_port_list;
+            break;
         case PortMode::FULL:
         default:
             p.reserve(65535);
-            for (int i=1; i<=65535; ++i) p.push_back(i);
+            for (int i = 1; i <= 65535; ++i) p.push_back(i);
             break;
     }
     return p;
 }
 
-struct PortHint { int port; const char* svc; const char* proto; };
+struct PortHint {
+    int port;
+    const char* svc;
+    const char* proto;
+};
+
 static const std::vector<PortHint> PORT_HINTS = {
-    {22,"SSH","tcp"},
-    {80,"HTTP","tcp"},
-    {443,"HTTPS / VLESS / Reality","tcp"},
-    {1080,"SOCKS5","tcp"},
-    {3128,"HTTP proxy","tcp"},
-    {4433,"XTLS / Reality","tcp"},
-    {4443,"XTLS / Reality","tcp"},
-    {8080,"HTTP proxy","tcp"},
-    {8443,"HTTPS alt / Reality","tcp"},
-    {8888,"HTTP alt","tcp"},
-    {9050,"Tor SOCKS","tcp"},
-    {9051,"Tor control","tcp"},
-    {10808,"v2ray/xray SOCKS","tcp"},
-    {10809,"v2ray/xray HTTP","tcp"},
-    {10810,"v2ray/xray alt","tcp"},
-    {41641,"WireGuard alt","udp"},
-    {51820,"WireGuard","udp"},
-    {55555,"AmneziaWG","udp"},
+    {22, "SSH", "tcp"},
+    {80, "HTTP", "tcp"},
+    {443, "HTTPS / VLESS / Reality", "tcp"},
+    {1080, "SOCKS5", "tcp"},
+    {3128, "HTTP proxy", "tcp"},
+    {4433, "XTLS / Reality", "tcp"},
+    {4443, "XTLS / Reality", "tcp"},
+    {8080, "HTTP proxy", "tcp"},
+    {8443, "HTTPS alt / Reality", "tcp"},
+    {8888, "HTTP alt", "tcp"},
+    {9050, "Tor SOCKS", "tcp"},
+    {9051, "Tor control", "tcp"},
+    {10808, "v2ray/xray SOCKS", "tcp"},
+    {10809, "v2ray/xray HTTP", "tcp"},
+    {10810, "v2ray/xray alt", "tcp"},
+    {41641, "WireGuard alt", "udp"},
+    {51820, "WireGuard", "udp"},
+    {55555, "AmneziaWG", "udp"},
 };
 
 const char* port_hint(int p) {
-    for (auto& h: PORT_HINTS) if (h.port == p) return h.svc;
+    for (const auto& h : PORT_HINTS) {
+        if (h.port == p) return h.svc;
+    }
     if (p == 6443 || p == 8443 || p == 4443) return "HTTPS alt / possible VPN over TLS";
     if (p >= 10800 && p <= 10820) return "v2ray/xray local-like range";
     return "";
 }
 
-static TcpOpen probe_tcp(const std::string& host, int port, int to_ms) {
-    TcpOpen o; o.port = port; o.connect_ms = -1;
-    auto t0 = std::chrono::steady_clock::now();
-    std::string err; SOCKET s = tcp_connect(host, port, to_ms, err);
-    if (s == INVALID_SOCKET) { o.err = err; return o; }
-    o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now() - t0).count();
-    char buf[512]; int n = tcp_recv_to(s, buf, sizeof(buf)-1, 600);
-    if (n > 0) {
-        buf[n]=0;
-        o.banner.assign(buf, n);
-        while (!o.banner.empty() && (o.banner.back()=='\r'||o.banner.back()=='\n'||o.banner.back()==0))
-            o.banner.pop_back();
-    }
-    closesocket(s);
-    return o;
-}
-
-std::vector<TcpOpen> scan_tcp(const std::string& host, const std::vector<int>& ports,
-                                int threads, int to_ms, ScanStats* stats) {
+std::vector<TcpOpen> scan_tcp(const std::string& host,
+                              const std::vector<int>& ports,
+                              int threads,
+                              int to_ms,
+                              ScanStats* stats) {
     std::vector<TcpOpen> open;
-    std::mutex mx;
-    std::atomic<size_t> idx{0};
-    std::atomic<int>    done{0};
-    std::atomic<size_t> tmo{0}, refused{0}, other{0};
-    std::atomic<bool>   abort_scan{false};
+    if (stats) *stats = {};
+    if (ports.empty()) return open;
 
-    while (_kbhit()) _getch();
+    sockaddr_storage base_addr{};
+    socklen_t base_len = 0;
+    if (!resolve_scan_target(host, base_addr, base_len)) {
+        fprintf(stderr, "  scan failed: cannot resolve target for TCP scan\n");
+        if (stats) {
+            stats->scanned = 0;
+            stats->other = ports.size();
+            stats->skipped = false;
+        }
+        return open;
+    }
+
+    const int max_inflight = std::clamp(threads, 16, 8192);
+    fprintf(stderr, "  async non-blocking scanner: inflight=%d, timeout=%dms\n", max_inflight, to_ms);
     fprintf(stderr, "  (press 'q' to skip this phase)\n");
 
-    std::thread kb([&]{
-        while (!abort_scan.load()) {
-            if (_kbhit()) {
-                int c = _getch();
-                if (c == 'q' || c == 'Q' || c == 27) {
-                    abort_scan = true;
-                    break;
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-    });
+    while (_kbhit()) _getch();
 
-    auto worker = [&]{
-        while (true) {
-            if (abort_scan.load()) break;
-            size_t i = idx.fetch_add(1);
-            if (i >= ports.size()) break;
-            TcpOpen o = probe_tcp(host, ports[i], to_ms);
-            int d = ++done;
-            size_t cur = 0;
-            if (o.connect_ms < 0) {
-                if (o.err == "timeout")      ++tmo;
-                else if (o.err == "refused") ++refused;
-                else                         ++other;
+    std::vector<PendingConn> inflight;
+    inflight.reserve(static_cast<size_t>(max_inflight));
+
+    size_t next_port = 0;
+    size_t completed = 0;
+    size_t timeouts = 0;
+    size_t refused = 0;
+    size_t other = 0;
+    bool aborted = false;
+
+    const auto launch_connect = [&](int port) {
+        sockaddr_storage dst = base_addr;
+        set_port(dst, port);
+
+        SOCKET s = socket(dst.ss_family, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) {
+            ++other;
+            ++completed;
+            return;
+        }
+
+        set_nonblocking(s, true);
+        const auto started = std::chrono::steady_clock::now();
+        int rc = connect(s, reinterpret_cast<const sockaddr*>(&dst), base_len);
+        if (rc == 0) {
+            set_nonblocking(s, false);
+            TcpOpen o;
+            o.port = port;
+            o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - started)
+                              .count();
+            read_banner_quick(s, o.banner);
+            closesocket(s);
+            open.push_back(std::move(o));
+            ++completed;
+            return;
+        }
+
+        const int werr = WSAGetLastError();
+        if (is_connect_in_progress_error(werr)) {
+            inflight.push_back(PendingConn{s, port, started});
+            return;
+        }
+
+        closesocket(s);
+        if (werr == WSAECONNREFUSED) {
+            ++refused;
+        } else {
+            ++other;
+        }
+        ++completed;
+    };
+
+    while (next_port < ports.size() || !inflight.empty()) {
+        if (_kbhit()) {
+            const int c = _getch();
+            if (c == 'q' || c == 'Q' || c == 27) {
+                aborted = true;
+                break;
             }
-            {
-                std::lock_guard<std::mutex> lk(mx);
-                if (o.connect_ms >= 0) open.push_back(std::move(o));
-                cur = open.size();
-            }
-            if (d % 20 == 0 || (size_t)d == ports.size()) {
-                fprintf(stderr, "\r  scanning %d/%zu  open=%zu  ", d, ports.size(), cur);
+        }
+
+        while (!aborted && next_port < ports.size() && static_cast<int>(inflight.size()) < max_inflight) {
+            launch_connect(ports[next_port]);
+            ++next_port;
+        }
+
+        if (inflight.empty()) {
+            if (completed % 200 == 0 || completed == ports.size()) {
+                fprintf(stderr, "\r  scanning %zu/%zu  open=%zu  ", completed, ports.size(), open.size());
                 fflush(stderr);
             }
+            continue;
         }
-    };
-    threads = std::max(1, std::min(threads, (int)ports.size()));
-    std::vector<std::thread> th;
-    for (int i=0;i<threads;++i) th.emplace_back(worker);
-    for (auto& t: th) t.join();
 
-    abort_scan = true;
-    kb.join();
+        std::vector<PollFd> fds;
+        fds.reserve(inflight.size());
+        for (const auto& p : inflight) {
+            PollFd fd{};
+            fd.fd = p.sock;
+            fd.events = POLLOUT | POLLERR | POLLHUP;
+            fd.revents = 0;
+            fds.push_back(fd);
+        }
 
-    size_t scanned = std::min(idx.load(), ports.size());
-    bool was_skipped = (scanned < ports.size());
+        const int prc = os_poll(fds.data(), fds.size(), 25);
+        const auto after_poll = std::chrono::steady_clock::now();
+
+        std::vector<PendingConn> next_inflight;
+        next_inflight.reserve(inflight.size());
+
+        for (size_t idx = 0; idx < inflight.size(); ++idx) {
+            bool remove_now = false;
+            bool success = false;
+
+            const bool signaled = prc > 0 && ((fds[idx].revents & (POLLOUT | POLLERR | POLLHUP)) != 0);
+            if (signaled) {
+                int se = 0;
+                socklen_t sl = sizeof(se);
+                getsockopt(inflight[idx].sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&se), &sl);
+                if (se == 0) {
+                    success = true;
+                } else if (se == WSAECONNREFUSED) {
+                    ++refused;
+                } else {
+                    ++other;
+                }
+                remove_now = true;
+            } else {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    after_poll - inflight[idx].started).count();
+                if (elapsed >= to_ms) {
+                    ++timeouts;
+                    remove_now = true;
+                }
+            }
+
+            if (!remove_now) {
+                next_inflight.push_back(inflight[idx]);
+                continue;
+            }
+
+            if (success) {
+                set_nonblocking(inflight[idx].sock, false);
+                TcpOpen o;
+                o.port = inflight[idx].port;
+                o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  after_poll - inflight[idx].started)
+                                  .count();
+                read_banner_quick(inflight[idx].sock, o.banner);
+                open.push_back(std::move(o));
+            }
+
+            closesocket(inflight[idx].sock);
+            ++completed;
+        }
+
+        inflight.swap(next_inflight);
+
+        if (completed % 200 == 0 || completed == ports.size()) {
+            fprintf(stderr, "\r  scanning %zu/%zu  open=%zu  ", completed, ports.size(), open.size());
+            fflush(stderr);
+        }
+    }
+
+    if (aborted) {
+        for (auto& p : inflight) closesocket(p.sock);
+        inflight.clear();
+    }
+
+    std::sort(open.begin(), open.end(), [](const TcpOpen& a, const TcpOpen& b) { return a.port < b.port; });
+
+    const size_t scanned = completed;
+    const bool was_skipped = aborted || scanned < ports.size();
+
     if (was_skipped) {
-        fprintf(stderr, "\r  scan SKIPPED at %zu/%zu (open=%zu)        \n",
-                scanned, ports.size(), open.size());
+        fprintf(stderr, "\r  scan SKIPPED at %zu/%zu (open=%zu)        \n", scanned, ports.size(), open.size());
     } else {
-        fprintf(stderr, "\r  scan done (%zu/%zu, open=%zu)        \n",
-                ports.size(), ports.size(), open.size());
+        fprintf(stderr, "\r  scan done (%zu/%zu, open=%zu)        \n", scanned, ports.size(), open.size());
     }
-    std::sort(open.begin(), open.end(), [](auto&a,auto&b){return a.port<b.port;});
+
     if (stats) {
-        stats->scanned  = scanned;
-        stats->timeouts = tmo.load();
-        stats->refused  = refused.load();
-        stats->other    = other.load();
-        stats->skipped  = was_skipped;
+        stats->scanned = scanned;
+        stats->timeouts = timeouts;
+        stats->refused = refused;
+        stats->other = other;
+        stats->skipped = was_skipped;
     }
+
     return open;
 }

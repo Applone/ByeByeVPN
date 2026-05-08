@@ -20,7 +20,6 @@ bool g_stealth    = false;
 bool g_no_geoip   = false;
 bool g_no_ct      = false;
 bool g_udp_jitter = false;
-bool g_use_ip_api = false;
 
 bool   g_save_requested = false;
 FILE*  g_save_fp = nullptr;

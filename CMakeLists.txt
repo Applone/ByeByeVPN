@@ -17,8 +17,6 @@ set(BYEBYEVPN_SOURCES
     src/analysis/ct_check.cpp
     src/analysis/geoip.cpp
     src/analysis/sni_consistency.cpp
-    src/analysis/snitch.cpp
-    src/analysis/traceroute.cpp
     src/analysis/tspu.cpp
     src/analysis/verdict.cpp
     src/cli/orchestrator.cpp

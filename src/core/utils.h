@@ -22,7 +22,6 @@ extern bool g_stealth;
 extern bool g_no_geoip;
 extern bool g_no_ct;
 extern bool g_udp_jitter;
-extern bool g_use_ip_api;
 
 extern bool   g_save_requested;
 extern FILE*  g_save_fp;

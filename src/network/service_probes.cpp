@@ -3,6 +3,9 @@
 #include "../analysis/tspu.h"
 #include "../core/utils.h"
 
+#include <cctype>
+#include <cstdlib>
+
 std::string printable_prefix(const std::string& s, size_t lim) {
     std::string out;
     for (size_t i=0;i<s.size() && out.size()<lim;++i) {
@@ -110,23 +113,61 @@ FpResult fp_socks5(const std::string& host, int port) {
 }
 
 FpResult fp_http_connect(const std::string& host, int port) {
-    FpResult f; f.service = "HTTP-PROXY?";
-    std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
-    if (s == INVALID_SOCKET) { f.silent = true; return f; }
-    std::string req = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+    FpResult f;
+    f.service = "HTTP-PROXY?";
+
+    std::string err;
+    SOCKET s = tcp_connect(host, port, g_tcp_to, err);
+    if (s == INVALID_SOCKET) {
+        f.silent = true;
+        return f;
+    }
+
+    const std::string req = "CONNECT example.com:443 HTTP/1.1\r\n"
+                            "Host: example.com:443\r\n"
+                            "Proxy-Connection: keep-alive\r\n"
+                            "\r\n";
     tcp_send_all(s, req.data(), (int)req.size());
-    char buf[512]; int n = tcp_recv_to(s, buf, sizeof(buf)-1, 1500);
+
+    char buf[512];
+    int n = tcp_recv_to(s, buf, sizeof(buf) - 1, 1500);
     closesocket(s);
-    if (n <= 0) { f.silent = true; return f; }
-    buf[n]=0;
-    std::string line(buf, buf + std::min(n, 120));
-    if (starts_with(line, "HTTP/")) {
+    if (n <= 0) {
+        f.silent = true;
+        return f;
+    }
+
+    buf[n] = 0;
+    std::string resp(buf, n);
+    const size_t nl = resp.find('\n');
+    const std::string first = trim(resp.substr(0, nl == std::string::npos ? resp.size() : nl));
+
+    if (!starts_with(first, "HTTP/")) {
+        f.details = printable_prefix(first);
+        return f;
+    }
+
+    int status = 0;
+    size_t p1 = first.find(' ');
+    if (p1 != std::string::npos && p1 + 1 < first.size()) {
+        size_t p2 = first.find(' ', p1 + 1);
+        const std::string code = first.substr(p1 + 1, (p2 == std::string::npos ? first.size() : p2) - (p1 + 1));
+        if (code.size() == 3 && std::isdigit((unsigned char)code[0]) && std::isdigit((unsigned char)code[1]) && std::isdigit((unsigned char)code[2])) {
+            status = atoi(code.c_str());
+        }
+    }
+
+    f.details = first;
+
+    const bool connect_ok = status == 200 || status == 201 || status == 202;
+    if (connect_ok) {
         f.service = "HTTP-PROXY";
-        f.details = trim(line.substr(0, line.find('\n')));
         f.is_vpn_like = true;
     } else {
-        f.details = printable_prefix(line);
+        f.service = "HTTP-CONNECT-DENY";
+        f.is_vpn_like = false;
     }
+
     return f;
 }
 

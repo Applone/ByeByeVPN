@@ -3,8 +3,6 @@
 #include "../analysis/brand_cert.h"
 #include "../analysis/ct_check.h"
 #include "../analysis/sni_consistency.h"
-#include "../analysis/snitch.h"
-#include "../analysis/traceroute.h"
 #include "../core/utils.h"
 #include "../network/https_probe.h"
 #include "../network/j3_probes.h"
@@ -15,9 +13,9 @@
 #include <algorithm>
 #include <array>
 #include <future>
-#include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -51,6 +49,65 @@ bool in_ports(const int port, const std::array<int, N>& ports) {
 
 bool is_tls_port(const int port) {
     return in_ports(port, kTlsPorts);
+}
+
+bool has_token(const std::string& value, const std::vector<std::string>& needles) {
+    const std::string low = tolower_s(value);
+    return std::any_of(needles.begin(), needles.end(), [&](const std::string& n) {
+        return contains(low, n);
+    });
+}
+
+bool is_known_cdn_asn(const std::string& asn_org) {
+    static const std::vector<std::string> kCdnAsnNeedles = {
+        "cloudflare",
+        "akamai",
+        "fastly",
+        "amazon",
+        "aws",
+        "google",
+        "gcp",
+        "microsoft",
+        "azure",
+        "edgecast",
+        "edgio",
+        "cdn77",
+        "cachefly",
+        "ddos-guard",
+        "verizon media",
+        "limelight",
+        "stackpath",
+        "bunny",
+        "cloudfront",
+        "netflix"
+    };
+    return has_token(asn_org, kCdnAsnNeedles);
+}
+
+bool looks_like_cdn_lb(const FullReport::PortFp& pf, const std::vector<std::string>& asn_orgs) {
+    static const std::vector<std::string> kServerNeedles = {
+        "envoy",
+        "cloudflare",
+        "cloudfront",
+        "akamai",
+        "fastly",
+        "varnish",
+        "gws",
+        "awselb",
+        "elb",
+        "edge"
+    };
+
+    if (std::any_of(asn_orgs.begin(), asn_orgs.end(), [](const std::string& org) { return is_known_cdn_asn(org); })) {
+        return true;
+    }
+
+    if (pf.https) {
+        if (has_token(pf.https->server_hdr, kServerNeedles)) return true;
+        if (pf.https->has_cdn_hdr) return true;
+    }
+
+    return false;
 }
 
 struct ScoreBook {
@@ -133,7 +190,7 @@ FullReport run_full_target(const std::string& target) {
     FullReport R;
     R.target = target;
 
-    tee_printf("\n%s[1/8] DNS resolve%s\n", col(C::BOLD), col(C::RST));
+    tee_printf("\n%s[1/7] DNS resolve%s\n", col(C::BOLD), col(C::RST));
     R.dns = resolve_host(target);
     if (!R.dns.err.empty()) {
         tee_printf("  %sERR%s: %s\n", col(C::RED), col(C::RST), R.dns.err.c_str());
@@ -151,30 +208,26 @@ FullReport run_full_target(const std::string& target) {
     }
 
     if (g_no_geoip) {
-        tee_printf("\n%s[2/8] GeoIP%s  SKIPPED (--no-geoip / --stealth)\n",
+        tee_printf("\n%s[2/7] GeoIP%s  SKIPPED (--no-geoip / --stealth)\n",
                    col(C::BOLD), col(C::RST));
     } else {
-        tee_printf("\n%s[2/8] GeoIP%s  (9 providers in parallel)\n", col(C::BOLD), col(C::RST));
+        tee_printf("\n%s[2/7] GeoIP%s  (7 HTTPS providers in parallel)\n", col(C::BOLD), col(C::RST));
 
         auto fg_eu1 = std::async(std::launch::async, geo_ipapi_is, R.dns.primary_ip);
         auto fg_eu2 = std::async(std::launch::async, geo_iplocate, R.dns.primary_ip);
         auto fg_eu3 = std::async(std::launch::async, geo_freeipapi, R.dns.primary_ip);
         auto fg_ru1 = std::async(std::launch::async, geo_2ip_ru, R.dns.primary_ip);
-        auto fg_ru2 = std::async(std::launch::async, geo_ipapi_ru, R.dns.primary_ip);
-        auto fg_ru3 = std::async(std::launch::async, geo_sypex, R.dns.primary_ip);
-        auto fg_gl1 = std::async(std::launch::async, geo_ip_api_com, R.dns.primary_ip);
-        auto fg_gl2 = std::async(std::launch::async, geo_ipwho_is, R.dns.primary_ip);
-        auto fg_gl3 = std::async(std::launch::async, geo_ipinfo_io, R.dns.primary_ip);
+        auto fg_ru2 = std::async(std::launch::async, geo_sypex, R.dns.primary_ip);
+        auto fg_gl1 = std::async(std::launch::async, geo_ipwho_is, R.dns.primary_ip);
+        auto fg_gl2 = std::async(std::launch::async, geo_ipinfo_io, R.dns.primary_ip);
 
         R.geos.push_back(safe_get_geo(fg_eu1, "ipapi.is"));
         R.geos.push_back(safe_get_geo(fg_eu2, "iplocate.io"));
         R.geos.push_back(safe_get_geo(fg_eu3, "freeipapi.com"));
         R.geos.push_back(safe_get_geo(fg_ru1, "2ip.ru"));
-        R.geos.push_back(safe_get_geo(fg_ru2, "ip-api.com/ru"));
-        R.geos.push_back(safe_get_geo(fg_ru3, "sypexgeo.net"));
-        R.geos.push_back(safe_get_geo(fg_gl1, "ip-api.com"));
-        R.geos.push_back(safe_get_geo(fg_gl2, "ipwho.is"));
-        R.geos.push_back(safe_get_geo(fg_gl3, "ipinfo.io"));
+        R.geos.push_back(safe_get_geo(fg_ru2, "sypexgeo.net"));
+        R.geos.push_back(safe_get_geo(fg_gl1, "ipwho.is"));
+        R.geos.push_back(safe_get_geo(fg_gl2, "ipinfo.io"));
 
         for (const auto& g : R.geos) print_geo_line(g);
     }
@@ -185,7 +238,7 @@ FullReport run_full_target(const std::string& target) {
         g_port_mode == PortMode::FAST ? "FAST" :
         g_port_mode == PortMode::RANGE ? "RANGE" : "LIST";
 
-    tee_printf("\n%s[3/8] TCP port scan%s  mode=%s%s%s  (%zu ports, %d threads, %dms timeout)\n",
+    tee_printf("\n%s[3/7] TCP port scan%s  mode=%s%s%s  (%zu ports, %d inflight, %dms timeout)\n",
                col(C::BOLD), col(C::RST),
                col(C::CYN), mode_name, col(C::RST),
                ports.size(), g_threads, g_tcp_to);
@@ -219,7 +272,7 @@ FullReport run_full_target(const std::string& target) {
         }
     }
 
-    tee_printf("\n%s[4/8] UDP active probes%s  (WG / AmneziaWG only)\n", col(C::BOLD), col(C::RST));
+    tee_printf("\n%s[4/7] UDP active probes%s  (WG / AmneziaWG only)\n", col(C::BOLD), col(C::RST));
     for (const auto& plan : kUdpPlans) {
         UdpResult u = plan.use_awg
             ? amneziawg_probe(R.dns.primary_ip, plan.port)
@@ -240,7 +293,7 @@ FullReport run_full_target(const std::string& target) {
         }
     }
 
-    tee_printf("\n%s[5/8] Service and TLS fingerprints%s\n", col(C::BOLD), col(C::RST));
+    tee_printf("\n%s[5/7] Service and TLS fingerprints%s\n", col(C::BOLD), col(C::RST));
 
     for (const auto& o : R.open_tcp) {
         FullReport::PortFp pf;
@@ -370,7 +423,7 @@ FullReport run_full_target(const std::string& target) {
         R.fps.push_back(std::move(pf));
     }
 
-    tee_printf("\n%s[6/8] Active junk probing (J3)%s\n", col(C::BOLD), col(C::RST));
+    tee_printf("\n%s[6/7] Active junk probing (J3)%s\n", col(C::BOLD), col(C::RST));
     for (auto& pf : R.fps) {
         if (!is_tls_port(pf.port) && pf.port != 80 && pf.port != 8080) continue;
 
@@ -403,72 +456,10 @@ FullReport run_full_target(const std::string& target) {
                    col(C::MAG), verdict, col(C::RST), silent, resp);
     }
 
-    tee_printf("\n%s[7/8] SNITCH latency + traceroute%s\n", col(C::BOLD), col(C::RST));
+    tee_printf("\n%s[7/7] Verdict%s\n", col(C::BOLD), col(C::RST));
 
     std::set<int> openset;
     for (const auto& o : R.open_tcp) openset.insert(o.port);
-
-    int rtt_port = 443;
-    if (openset.count(443) == 0 && !R.open_tcp.empty()) rtt_port = R.open_tcp.front().port;
-
-    std::string consensus_cc;
-    {
-        std::map<std::string, int> votes;
-        for (const auto& g : R.geos) {
-            if (!g.country_code.empty()) ++votes[g.country_code];
-        }
-        for (const auto& [cc, count] : votes) {
-            if (consensus_cc.empty() || count > votes[consensus_cc]) consensus_cc = cc;
-        }
-    }
-
-    SnitchResult sn = snitch_check(R.dns.primary_ip, rtt_port, consensus_cc, g_observer_cc);
-    R.snitch = sn;
-
-    if (!sn.ok) {
-        tee_printf("  %sSNITCH:%s %s\n", col(C::DIM), col(C::RST), sn.summary.c_str());
-    } else {
-        const char* sn_col = (sn.too_low || sn.too_high) ? col(C::RED)
-                           : (sn.high_jitter || sn.anchor_ratio_off) ? col(C::YEL)
-                           : col(C::GRN);
-
-        tee_printf("  %sSNITCH RTT:%s median=%.1fms min=%.1fms max=%.1fms stddev=%.1fms (%d samples)\n",
-                   col(C::BOLD), col(C::RST),
-                   sn.median_ms, sn.min_ms, sn.max_ms, sn.stddev_ms, sn.samples);
-
-        tee_printf("  %s=>%s %s%s%s\n",
-                   col(C::BOLD), col(C::RST), sn_col, sn.summary.c_str(), col(C::RST));
-    }
-
-    TraceResult tr = trace_hops(R.dns.primary_ip, 18);
-    R.trace = tr;
-
-    if (tr.ok) {
-        tee_printf("  %sTraceroute:%s %d hops, reached=%s, max_rtt_jump=%dms, long_hops(>150ms)=%d\n",
-                   col(C::BOLD), col(C::RST),
-                   tr.hop_count,
-                   tr.reached_target ? "yes" : "no",
-                   tr.max_rtt_jump_ms,
-                   tr.long_hops);
-
-        int shown = 0;
-        for (const auto& h : tr.hops) {
-            if (shown >= 12) {
-                tee_printf("    ...\n");
-                break;
-            }
-            if (h.rtt_ms < 0) {
-                tee_printf("    %2d  %s*%s\n", h.ttl, col(C::DIM), col(C::RST));
-            } else {
-                tee_printf("    %2d  %-16s  %dms\n", h.ttl, h.addr.c_str(), h.rtt_ms);
-            }
-            ++shown;
-        }
-    } else {
-        tee_printf("  %sTraceroute:%s no hops returned (ICMP filtered)\n", col(C::DIM), col(C::RST));
-    }
-
-    tee_printf("\n%s[8/8] Verdict%s\n", col(C::BOLD), col(C::RST));
 
     ScoreBook book;
 
@@ -530,6 +521,7 @@ FullReport run_full_target(const std::string& target) {
     bool any_j3_canned = false;
     bool any_j3_badver = false;
     bool any_ct_absent_fresh = false;
+    bool any_cdn_lb_detected = false;
 
     std::vector<std::string> asn_orgs;
     for (const auto& g : R.geos) {
@@ -537,6 +529,12 @@ FullReport run_full_target(const std::string& target) {
     }
 
     for (const auto& pf : R.fps) {
+        const bool cdn_lb_port = looks_like_cdn_lb(pf, asn_orgs);
+        if (cdn_lb_port) {
+            any_cdn_lb_detected = true;
+            book.note("cdn-lb", "CDN/load-balancer traits on :" + std::to_string(pf.port) + ", suppressing SNI-impersonation penalties");
+        }
+
         if (pf.fp.service == "HTTP-PROXY") {
             any_proxy_open = true;
             book.strong_signal("open HTTP CONNECT proxy exposed on :" + std::to_string(pf.port), 15);
@@ -567,15 +565,19 @@ FullReport run_full_target(const std::string& target) {
         }
 
         if (pf.sni && pf.sni->reality_like) {
-            any_reality = true;
-            const int penalty = pf.sni->passthrough_mode ? 20 : 16;
-            book.strong_signal("Reality/XTLS SNI steering on :" + std::to_string(pf.port), penalty);
+            if (cdn_lb_port) {
+                book.note("sni-cdn", "SNI mismatch on :" + std::to_string(pf.port) + " looks CDN/LB-driven, not VPN-specific");
+            } else {
+                any_reality = true;
+                const int penalty = pf.sni->passthrough_mode ? 20 : 16;
+                book.strong_signal("Reality/XTLS SNI steering on :" + std::to_string(pf.port), penalty);
 
-            if (pf.sni->cert_impersonation && !pf.sni->brand_claimed.empty()) {
-                const bool owns = asn_owns_brand(pf.sni->brand_claimed, asn_orgs);
-                if (!owns) {
-                    any_impersonation = true;
-                    book.strong_signal("cert claims brand '" + pf.sni->brand_claimed + "' on non-owning ASN", 18);
+                if (pf.sni->cert_impersonation && !pf.sni->brand_claimed.empty()) {
+                    const bool owns = asn_owns_brand(pf.sni->brand_claimed, asn_orgs);
+                    if (!owns) {
+                        any_impersonation = true;
+                        book.strong_signal("cert claims brand '" + pf.sni->brand_claimed + "' on non-owning ASN", 18);
+                    }
                 }
             }
         }
@@ -590,7 +592,11 @@ FullReport run_full_target(const std::string& target) {
             }
 
             if (pf.https->has_proxy_leak) {
-                book.strong_signal("proxy-chain headers leaked by HTTPS origin on :" + std::to_string(pf.port), 10);
+                if (cdn_lb_port) {
+                    book.note("proxy-hdr", "forwarding headers on :" + std::to_string(pf.port) + " are expected for CDN/LB edges");
+                } else {
+                    book.strong_signal("proxy-chain headers leaked by HTTPS origin on :" + std::to_string(pf.port), 10);
+                }
             }
         }
 
@@ -622,24 +628,7 @@ FullReport run_full_target(const std::string& target) {
         book.strong_signal("network-level timeout wall (probable routed blackhole)", 35);
     }
 
-    if (R.snitch && R.snitch->ok) {
-        if (R.snitch->too_low) {
-            book.strong_signal("SNITCH latency is physically too low for claimed geo", 10);
-        } else if (R.snitch->too_high) {
-            book.soft_signal("SNITCH latency is well above expected geo envelope", 6);
-        } else if (R.snitch->high_jitter) {
-            book.note("snitch-jitter", "high RTT jitter may indicate tunnel buffering");
-        }
-    }
 
-    if (R.trace && R.trace->ok) {
-        if (R.trace->hop_count >= 20) {
-            book.soft_signal("traceroute path is unusually long", 3);
-        }
-        if (R.trace->max_rtt_jump_ms >= 120 && R.trace->long_hops >= 2) {
-            book.note("trace-step", "large RTT step in path may indicate long-haul relay");
-        }
-    }
 
     book.clamp();
     R.score = book.score;
@@ -737,6 +726,9 @@ FullReport run_full_target(const std::string& target) {
     axis("Open proxy exposure", any_proxy_open ? "HIGH" : "NONE",
          any_proxy_open ? "HTTP/SOCKS proxy reachable from WAN" : "no open proxy fingerprint");
 
+    axis("CDN/LB environment", any_cdn_lb_detected ? "LOW" : "NONE",
+         any_cdn_lb_detected ? "CDN/LB traits detected; SNI mismatch heuristics are down-weighted" : "no CDN/LB traits detected");
+
     if (R.bgp_blackhole_likely) {
         axis("Network-level filtering", "HIGH", "scan pattern indicates routed timeout wall");
     } else {
@@ -794,7 +786,7 @@ FullReport run_full_target(const std::string& target) {
             bool tier_a;
         };
 
-        const std::array<Rule, 9> rules{{
+        const std::array<Rule, 8> rules{{
             {"WireGuard signature", wg_default, "UDP/51820 handshake reply", true},
             {"AmneziaWG signature", awg_default, "UDP/55555 obfuscated handshake reply", true},
             {"Open proxy exposure", any_proxy_open, "SOCKS/HTTP CONNECT reachable", true},
@@ -803,7 +795,6 @@ FullReport run_full_target(const std::string& target) {
             {"Reality cert-steering", any_reality, "SNI steering discriminator", false},
             {"Cert impersonation", any_impersonation, "brand cert/ASN mismatch", false},
             {"Active-probe anomalies", any_j3_canned || any_j3_badver, "canned/malformed HTTP fallback", false},
-            {"SNITCH geo conflict", R.snitch && R.snitch->ok && (R.snitch->too_low || R.snitch->too_high), "latency vs geo inconsistency", false},
         }};
 
         int a_hits = 0;

@@ -1,5 +1,4 @@
 #include "tcp_scanner.h"
-#include <chrono>
 #include <vector>
 
 SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::string& err) {

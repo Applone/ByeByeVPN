@@ -21,13 +21,12 @@ Given an IP or hostname, run a remote detectability methodology focused on moder
 ## Pipeline
 
 1. **DNS resolve**: A + AAAA, IPv4 preferred
-2. **GeoIP aggregation**: 9 providers in parallel, ASN + tags
-3. **TCP port scan**: Connect-scan 1-65535 or curated ports
+2. **GeoIP aggregation**: HTTPS-only providers in parallel, ASN + tags
+3. **TCP port scan**: Async non-blocking connect-scan 1-65535 or curated ports
 4. **UDP probes**: WireGuard and AmneziaWG handshake probes only
 5. **Service fingerprint + CT**: SSH, HTTP, TLS + SNI consistency, proxy exposure, proxy-header leak
 6. **Active probing (J3)**: multi-probe behaviour checks per TLS-like port
-7. **SNITCH + traceroute**: RTT-vs-GeoIP consistency and ICMP hop-shape analysis
-8. **Verdict**: Score 0-100, stack identification, hardening advice
+7. **Verdict**: Score 0-100, stack identification, hardening advice
 
 ## Build
 
