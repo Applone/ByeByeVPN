@@ -13,8 +13,8 @@ using std::vector;
 
 bool g_no_color = false;
 bool g_verbose  = false;
-int  g_threads  = 500;
-int  g_tcp_to   = 800;
+int  g_threads  = 1200;
+int  g_tcp_to   = 500;
 int  g_udp_to   = 900;
 bool g_stealth    = false;
 bool g_no_geoip   = false;

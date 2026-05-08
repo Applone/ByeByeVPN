@@ -106,17 +106,6 @@ void set_port(sockaddr_storage& addr, int port) {
     }
 }
 
-void read_banner_quick(SOCKET s, std::string& banner) {
-    char buf[512];
-    int n = tcp_recv_to(s, buf, static_cast<int>(sizeof(buf)) - 1, 180);
-    if (n <= 0) return;
-    buf[n] = '\0';
-    banner.assign(buf, n);
-    while (!banner.empty() && (banner.back() == '\r' || banner.back() == '\n' || banner.back() == '\0')) {
-        banner.pop_back();
-    }
-}
-
 bool is_connect_in_progress_error(int err) {
 #ifdef _WIN32
     return err == WSAEWOULDBLOCK || err == WSAEINPROGRESS || err == WSAEALREADY;
@@ -246,7 +235,6 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
             TcpOpen o;
             o.port = port;
             o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
-            read_banner_quick(s, o.banner);
             closesocket(s);
             out.open.push_back(std::move(o));
             if (global_open) global_open->fetch_add(1, std::memory_order_relaxed);
@@ -308,7 +296,6 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
                     TcpOpen o;
                     o.port = it->second.port;
                     o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.started).count();
-                    read_banner_quick(s, o.banner);
                     out.open.push_back(std::move(o));
                     if (global_open) global_open->fetch_add(1, std::memory_order_relaxed);
                 } else if (is_refused_error(se)) {
@@ -491,7 +478,6 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
             TcpOpen o;
             o.port = done->port;
             o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - done->started).count();
-            read_banner_quick(done->sock, o.banner);
             closesocket(done->sock);
 
             out.open.push_back(std::move(o));
@@ -540,7 +526,6 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
                     TcpOpen o;
                     o.port = done->port;
                     o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - done->started).count();
-                    read_banner_quick(done->sock, o.banner);
                     out.open.push_back(std::move(o));
                     if (global_open) global_open->fetch_add(1, std::memory_order_relaxed);
                 } else if (is_refused_error(se)) {
@@ -916,11 +901,11 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
     size_t hw = static_cast<size_t>(std::thread::hardware_concurrency());
     if (hw == 0) hw = 4;
 
-    size_t workers = std::clamp<size_t>(static_cast<size_t>(inflight_total / 512), 1, hw);
-    if (ports.size() >= 4096) workers = std::max<size_t>(2, workers);
+    size_t workers = std::clamp<size_t>(static_cast<size_t>(inflight_total / 256), 1, hw * 2);
+    if (ports.size() >= 2048) workers = std::max<size_t>(2, workers);
     workers = std::min(workers, ports.size());
 
-    const int inflight_per_worker = std::max(32, inflight_total / static_cast<int>(workers));
+    const int inflight_per_worker = std::max(64, inflight_total / static_cast<int>(workers));
 
     std::vector<std::vector<int>> shards(workers);
     for (size_t i = 0; i < ports.size(); ++i) {
@@ -972,6 +957,10 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
 
     std::vector<bool> taken(futures.size(), false);
     size_t done = 0;
+    size_t last_scanned = 0;
+    auto last_progress = Clock::now();
+    const long long stall_limit_ms = std::max<long long>(8000, static_cast<long long>(timeout_ms) * 6LL);
+    bool watchdog_triggered = false;
 
     while (done < futures.size()) {
         if (_kbhit()) {
@@ -1005,6 +994,25 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
                 ports.size(),
                 progress_open.load(std::memory_order_relaxed));
         fflush(stderr);
+
+        const size_t now_scanned = progress_scanned.load(std::memory_order_relaxed);
+        if (now_scanned != last_scanned) {
+            last_scanned = now_scanned;
+            last_progress = Clock::now();
+            watchdog_triggered = false;
+        } else {
+            const auto stalled_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - last_progress).count();
+            if (stalled_ms > stall_limit_ms) {
+                if (!watchdog_triggered) {
+                    fprintf(stderr,
+                            "\n  watchdog: no scan progress for %lld ms, stopping pending connects\n",
+                            stalled_ms);
+                    watchdog_triggered = true;
+                }
+                stop_flag.store(true, std::memory_order_relaxed);
+            }
+        }
 
         if (done == futures.size()) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));

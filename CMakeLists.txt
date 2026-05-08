@@ -5,11 +5,18 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(BYEBYEVPN_STATIC "Build with static libraries" ON)
+
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
-set(OPENSSL_USE_STATIC_LIBS TRUE)
+if(BYEBYEVPN_STATIC)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+else()
+    set(OPENSSL_USE_STATIC_LIBS FALSE)
+endif()
+
 find_package(OpenSSL 3.0 REQUIRED)
 
 set(BYEBYEVPN_SOURCES
@@ -50,13 +57,17 @@ if(WIN32)
         target_compile_options(byebyevpn PRIVATE /W3)
     elseif(MINGW)
         target_compile_options(byebyevpn PRIVATE -Wall -Wextra)
-        target_link_options(byebyevpn PRIVATE -static -static-libgcc -static-libstdc++)
+        if(BYEBYEVPN_STATIC)
+            target_link_options(byebyevpn PRIVATE -static -static-libgcc -static-libstdc++)
+        endif()
     endif()
 else()
     target_link_libraries(byebyevpn PRIVATE pthread dl)
 
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        target_link_options(byebyevpn PRIVATE -static-libgcc -static-libstdc++)
+        if(BYEBYEVPN_STATIC)
+            target_link_options(byebyevpn PRIVATE -static-libgcc -static-libstdc++)
+        endif()
     endif()
 
     target_compile_options(byebyevpn PRIVATE

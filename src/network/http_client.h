@@ -11,6 +11,8 @@ struct HttpResp {
     bool ok() const { return status >= 200 && status < 400; }
 };
 
-HttpResp http_get(const std::string& url, int timeout_ms = 7000);
+HttpResp http_get(const std::string& url,
+                  int timeout_ms = 7000,
+                  bool allow_insecure_tls_fallback = false);
 
 #endif // NETWORK_HTTP_CLIENT_H

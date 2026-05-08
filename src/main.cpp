@@ -157,8 +157,8 @@ void help() {
     tee_printf("  --ports 80,443,8443 scan explicit port list\n\n");
 
     tee_printf("Tuning:\n");
-    tee_printf("  --threads N     parallel TCP connects   (default 500)\n");
-    tee_printf("  --tcp-to MS     TCP connect timeout      (default 800)\n");
+    tee_printf("  --threads N     parallel TCP connects   (default 1200)\n");
+    tee_printf("  --tcp-to MS     TCP connect timeout      (default 500)\n");
     tee_printf("  --udp-to MS     UDP recv timeout         (default 900)\n");
     tee_printf("  --syn           Linux-only TCP SYN half-open scan\n");
     tee_printf("  --no-color      disable ANSI colors\n");
