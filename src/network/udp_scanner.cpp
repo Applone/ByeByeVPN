@@ -26,7 +26,7 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
     
 #ifdef _WIN32
     DWORD to = (DWORD)timeout_ms;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof(to));
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
 #else
     struct timeval tv;
     tv.tv_sec = timeout_ms / 1000;
@@ -60,7 +60,7 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
 
     if (got > 0) {
         r.responded = true; r.bytes = got;
-        r.reply_hex = hex_s((unsigned char*)buf, std::min(32, got), true);
+        r.reply_hex = hex_s(reinterpret_cast<unsigned char*>(buf), std::min(32, got), true);
     } else if (werr == WSAETIMEDOUT || werr == 0) {
         r.err = "no-reply / filtered";
     } else if (werr == WSAECONNRESET) {

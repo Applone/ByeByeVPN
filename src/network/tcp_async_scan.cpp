@@ -1007,7 +1007,7 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
                 if (!watchdog_triggered) {
                     fprintf(stderr,
                             "\n  watchdog: no scan progress for %lld ms, stopping pending connects\n",
-                            stalled_ms);
+                            static_cast<long long>(stalled_ms));
                     watchdog_triggered = true;
                 }
                 stop_flag.store(true, std::memory_order_relaxed);

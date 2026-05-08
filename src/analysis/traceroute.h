@@ -19,6 +19,6 @@ struct TraceResult {
     std::vector<TraceHop> hops;
 };
 
-TraceResult trace_hops(const std::string& target_ip, int max_hops = 18);
+
 
 #endif // ANALYSIS_TRACEROUTE_H

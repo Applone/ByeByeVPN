@@ -1,4 +1,6 @@
 #include "tspu.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cctype>
 
@@ -39,7 +41,7 @@ const char* looks_like_tspu_redirect(const std::string& location) {
         if (colon != std::string::npos) host = host.substr(0, colon);
     }
 
-    for (auto& ch : host) ch = (char)std::tolower((unsigned char)ch);
+    std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c){ return std::tolower(c); });
 
     for (const char** p = TSPU_REDIRECT_MARKERS; *p; ++p) {
         if (host.find(*p) != std::string::npos) return *p;

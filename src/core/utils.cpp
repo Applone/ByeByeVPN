@@ -1,4 +1,6 @@
 #include "utils.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -118,7 +120,7 @@ void banner() {
 }
 
 string tolower_s(string s) {
-    for (auto& c: s) c = (char)tolower((unsigned char)c);
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
     return s;
 }
 bool contains(const string& h, const string& n) { return h.find(n) != string::npos; }

@@ -11,10 +11,10 @@ SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::strin
     for (auto* p = ai; p; p = p->ai_next) if (p->ai_family == AF_INET)  ordered.push_back(p);
     for (auto* p = ai; p; p = p->ai_next) if (p->ai_family == AF_INET6) ordered.push_back(p);
     SOCKET s = INVALID_SOCKET;
-    bool saw_timeout = false, saw_refused = false, saw_other = false;
+    bool saw_timeout = false, saw_refused = false;
     for (auto* p: ordered) {
         s = socket(p->ai_family, SOCK_STREAM, IPPROTO_TCP);
-        if (s == INVALID_SOCKET) { saw_other = true; continue; }
+        if (s == INVALID_SOCKET) { continue; }
 #ifdef _WIN32
         u_long nb = 1; ioctlsocket(s, FIONBIO, &nb);
 #else
@@ -41,7 +41,7 @@ SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::strin
             int sr = select((int)s + 1, nullptr, &wr, &ex, &tv);
             if (sr > 0 && FD_ISSET(s, &wr)) {
                 int se = 0; socklen_t sl = sizeof(se);
-                getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&se, &sl);
+                getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&se), &sl);
                 if (se == 0) { 
 #ifdef _WIN32
                     u_long bl=0; ioctlsocket(s,FIONBIO,&bl); 
@@ -51,15 +51,11 @@ SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::strin
                     break; 
                 }
                 if (se == WSAECONNREFUSED) saw_refused = true;
-                else saw_other = true;
             } else if (sr == 0) {
                 saw_timeout = true;
-            } else {
-                saw_other = true;
             }
         } else {
             if (werr == WSAECONNREFUSED) saw_refused = true;
-            else saw_other = true;
         }
         closesocket(s); s = INVALID_SOCKET;
     }
@@ -75,18 +71,18 @@ SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::strin
 int tcp_recv_to(SOCKET s, char* buf, int max, int timeout_ms) {
 #ifdef _WIN32
     DWORD to = (DWORD)timeout_ms;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof(to));
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
 #else
     struct timeval tv;
     tv.tv_sec = timeout_ms / 1000;
     tv.tv_usec = (timeout_ms % 1000) * 1000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
 #endif
     return recv(s, buf, max, 0);
 }
 
 int tcp_send_all(SOCKET s, const void* data, int n) {
-    const char* p = (const char*)data; int left = n;
+    const char* p = reinterpret_cast<const char*>(data); int left = n;
     while (left > 0) {
         int rc = send(s, p, left, 0);
         if (rc <= 0) return rc;

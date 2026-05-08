@@ -26,7 +26,7 @@ static J3Result j3_send(const std::string& host, int port, const std::string& na
         std::string raw(buf, n);
         size_t nl = raw.find('\n');
         r.first_line = trim(raw.substr(0, nl == std::string::npos ? raw.size() : nl));
-        r.hex_head = hex_s((unsigned char*)buf, std::min(16, n), true);
+        r.hex_head = hex_s(reinterpret_cast<unsigned char*>(buf), std::min(16, n), true);
     }
     return r;
 }
@@ -44,7 +44,7 @@ std::vector<J3Result> j3_probes(const std::string& host, int port) {
                 std::string printable;
                 for(char c: b) { if (c>=32 && c<127) printable+=c; else printable+='.'; }
                 r.first_line = printable; 
-                r.hex_head = hex_s((unsigned char*)buf, std::min(16,n), true); 
+                r.hex_head = hex_s(reinterpret_cast<unsigned char*>(buf), std::min(16,n), true); 
             }
             closesocket(s);
         }

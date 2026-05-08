@@ -384,7 +384,6 @@ int main_impl(int argc, char** argv) {
         return 2;
     }
 
-    bool wsa_started = false;
 #ifdef _WIN32
     WSADATA ws{};
     const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &ws);
@@ -393,12 +392,11 @@ int main_impl(int argc, char** argv) {
         fflush(stderr);
         return 2;
     }
-    wsa_started = true;
 #endif
 
     const auto early_return = [&](int code) {
 #ifdef _WIN32
-        if (wsa_started) WSACleanup();
+        WSACleanup();
 #endif
         openssl_runtime_cleanup();
         fflush(stdout);

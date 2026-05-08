@@ -92,7 +92,7 @@ FpResult fp_socks5(const std::string& host, int port) {
     if (s == INVALID_SOCKET) { f.silent = true; return f; }
     unsigned char greet[] = {0x05, 0x02, 0x00, 0x02};
     tcp_send_all(s, greet, sizeof(greet));
-    unsigned char reply[8]; int n = tcp_recv_to(s, (char*)reply, sizeof(reply), 1200);
+    unsigned char reply[8]; int n = tcp_recv_to(s, reinterpret_cast<char*>(reply), sizeof(reply), 1200);
     closesocket(s);
     if (n <= 0) { f.silent = true; return f; }
     if (reply[0] == 0x05 && n >= 2) {

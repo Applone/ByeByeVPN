@@ -24,6 +24,6 @@ struct SnitchResult {
 };
 
 // observer_cc is reserved for future observer-specific calibration.
-SnitchResult snitch_check(const std::string& target_ip, int target_port, const std::string& target_cc, const std::string& observer_cc = "");
+
 
 #endif // ANALYSIS_SNITCH_H

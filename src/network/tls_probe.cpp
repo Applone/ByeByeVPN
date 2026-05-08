@@ -155,7 +155,7 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
                     unsigned char* us = nullptr;
                     int ul = ASN1_STRING_to_UTF8(&us, g->d.dNSName);
                     if (ul > 0) {
-                        std::string name((char*)us, ul);
+                        std::string name(reinterpret_cast<char*>(us), ul);
                         if (name.size() > 2 && name[0]=='*' && name[1]=='.') r.is_wildcard = true;
                         r.san.push_back(std::move(name));
                     }

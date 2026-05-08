@@ -26,7 +26,7 @@ struct Ja3Info {
     std::string ec_formats;
     std::string ja3_hash;
 };
-Ja3Info our_openssl_ja3_signature();
+
 
 struct Advice {
     std::string kind;

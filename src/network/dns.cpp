@@ -19,7 +19,7 @@ static std::string sa_ip(const sockaddr* sa) {
         auto* s4 = (sockaddr_in*)sa;
         inet_ntop(AF_INET, &s4->sin_addr, buf, sizeof(buf));
     } else {
-        auto* s6 = (sockaddr_in6*)sa;
+        auto* s6 = reinterpret_cast<const sockaddr_in6*>(sa);
         inet_ntop(AF_INET6, &s6->sin6_addr, buf, sizeof(buf));
     }
     return buf;

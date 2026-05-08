@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <cctype>
 #include <future>
 
 static double percentile(std::vector<double> v, double pct) {
@@ -87,7 +88,7 @@ static double country_min_rtt_ms(const std::string& cc) {
     };
     if (cc.empty()) return 0.0;
     std::string u = cc;
-    for (auto& c: u) c = (char)std::toupper((unsigned char)c);
+    std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c){ return std::toupper(c); });
     for (auto& e: TBL) if (u == e.cc) return e.min_ms;
     return 0.0;
 }
@@ -104,96 +105,9 @@ static double country_max_rtt_ms(const std::string& cc) {
     };
     if (cc.empty()) return 0.0;
     std::string u = cc;
-    for (auto& c: u) c = (char)std::toupper((unsigned char)c);
+    std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c){ return std::toupper(c); });
     for (auto& e: TBL) if (u == e.cc) return e.max_ms;
     return 0.0;
 }
 
-SnitchResult snitch_check(const std::string& target_ip, int target_port, const std::string& target_cc, const std::string& observer_cc) {
-    SnitchResult r; r.country_code = target_cc;
-    (void)observer_cc;
-    const int samples = 6;
 
-    auto anchor_job = [&](std::string ip, int port) {
-        std::vector<double> xs; measure_rtt_series(ip, port, 1500, 4, xs);
-        std::sort(xs.begin(), xs.end());
-        if (xs.size() >= 4) xs.pop_back();
-        return xs.empty() ? -1.0 : percentile(xs, 0.5);
-    };
-    auto f_cf   = std::async(std::launch::async, anchor_job, "1.1.1.1",      443);
-    auto f_goog = std::async(std::launch::async, anchor_job, "8.8.8.8",      443);
-    auto f_yan  = std::async(std::launch::async, anchor_job, "77.88.8.8",    443);
-
-    std::vector<double> samples_v;
-    measure_rtt_series(target_ip, target_port, 2000, samples, samples_v);
-    r.samples = (int)samples_v.size();
-    if (r.samples < 3) {
-        r.ok = false;
-        r.summary = "insufficient samples (<3 successful TCP handshakes)";
-        r.cf_median_ms     = f_cf.get();
-        r.google_median_ms = f_goog.get();
-        r.yandex_median_ms = f_yan.get();
-        return r;
-    }
-    std::sort(samples_v.begin(), samples_v.end());
-    if ((int)samples_v.size() >= 5) samples_v.pop_back();
-    double sum = 0.0;
-    r.min_ms = samples_v.front();
-    r.max_ms = samples_v.back();
-    for (auto v: samples_v) sum += v;
-    double mean = sum / static_cast<double>(samples_v.size());
-    double var  = 0;
-    for (auto v: samples_v) var += (v - mean) * (v - mean);
-    var /= static_cast<double>(samples_v.size());
-    r.stddev_ms = std::sqrt(var);
-    r.median_ms = percentile(samples_v, 0.5);
-
-    r.cf_median_ms     = f_cf.get();
-    r.google_median_ms = f_goog.get();
-    r.yandex_median_ms = f_yan.get();
-
-    double emin = country_min_rtt_ms(target_cc);
-    double emax = country_max_rtt_ms(target_cc);
-    r.expected_min_ms = emin;
-    if (emin > 0) {
-        if (r.median_ms < emin * 0.5) r.too_low  = true;
-        if (r.median_ms > emax * 3.0) r.too_high = true;
-    }
-    if (r.stddev_ms > 40.0) r.high_jitter = true;
-
-    double closest = std::min({
-        r.cf_median_ms > 0 ? r.cf_median_ms : 9e9,
-        r.google_median_ms > 0 ? r.google_median_ms : 9e9,
-        r.yandex_median_ms > 0 ? r.yandex_median_ms : 9e9
-    });
-    if (closest > 0 && closest < 9e9 && r.median_ms > 0) {
-        double ratio = r.median_ms / closest;
-        if (emax > 0 && emax < 80.0 && ratio > 4.0) r.anchor_ratio_off = true;
-        if (emin > 0 && emin > 60.0 && r.median_ms < closest * 0.8) r.anchor_ratio_off = true;
-    }
-    r.ok = true;
-    {
-        char buf[256];
-        if (r.too_low)
-            snprintf(buf, sizeof(buf),
-                     "median %.1fms but %s geo implies >=%.0fms — impossibly low (GeoIP lies OR anycast proxy)",
-                     r.median_ms, target_cc.c_str(), emin);
-        else if (r.too_high)
-            snprintf(buf, sizeof(buf),
-                     "median %.1fms is >3x the normal %.0fms band for %s — extra hops in path (tunnel / long middlebox chain)",
-                     r.median_ms, emax, target_cc.c_str());
-        else if (r.high_jitter)
-            snprintf(buf, sizeof(buf),
-                     "stddev %.1fms over %d samples — high jitter typical of tunnel queue/encryption overhead",
-                     r.stddev_ms, r.samples);
-        else if (r.anchor_ratio_off)
-            snprintf(buf, sizeof(buf),
-                     "target RTT doesn't match closest anchor ratio — location doesn't add up");
-        else
-            snprintf(buf, sizeof(buf),
-                     "RTT %.1fms (min %.1f, stddev %.1f) — consistent with %s geolocation",
-                     r.median_ms, r.min_ms, r.stddev_ms, target_cc.c_str());
-        r.summary = buf;
-    }
-    return r;
-}

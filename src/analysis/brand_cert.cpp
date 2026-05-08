@@ -1,5 +1,7 @@
 #include "brand_cert.h"
 #include "../core/utils.h"
+#include <algorithm>
+#include <cctype>
 
 struct BrandMarker {
     const char* brand;
@@ -109,7 +111,7 @@ std::string cert_claims_brand(const std::string& subject_cn, const std::vector<s
     auto is_brand = [](const std::string& name)->const char*{
         if (name.empty()) return nullptr;
         std::string ln = name;
-        for (auto& c: ln) c = (char)std::tolower((unsigned char)c);
+        std::transform(ln.begin(), ln.end(), ln.begin(), [](unsigned char c){ return std::tolower(c); });
         if (ln.size() > 2 && ln[0]=='*' && ln[1]=='.') ln = ln.substr(2);
         for (size_t i=0;i<BRAND_TABLE_N;++i) {
             if (ln == BRAND_TABLE[i].brand) return BRAND_TABLE[i].brand;
@@ -138,35 +140,15 @@ bool asn_owns_brand(const std::string& brand_domain, const std::vector<std::stri
     }
     if (!markers) return false;
     std::string ms = markers;
-    for (auto& c: ms) c = (char)std::tolower((unsigned char)c);
+    std::transform(ms.begin(), ms.end(), ms.begin(), [](unsigned char c){ return std::tolower(c); });
     std::vector<std::string> parts = split(ms, ',');
     for (auto& org: asn_orgs) {
         std::string lo = org;
-        for (auto& c: lo) c = (char)std::tolower((unsigned char)c);
+        std::transform(lo.begin(), lo.end(), lo.begin(), [](unsigned char c){ return std::tolower(c); });
         for (auto& m: parts) {
             std::string mm = trim(m);
             if (!mm.empty() && lo.find(mm) != std::string::npos) return true;
         }
     }
     return false;
-}
-
-std::string server_header_brand(const std::string& server_hdr) {
-    if (server_hdr.empty()) return {};
-    std::string s = server_hdr;
-    for (auto& c: s) c = (char)std::tolower((unsigned char)c);
-    if (s.find("cloudfront") != std::string::npos) return "amazon.com";
-    if (s.find("amazons3")   != std::string::npos) return "amazon.com";
-    if (s.find("awselb")     != std::string::npos) return "amazon.com";
-    if (s.find("aws elb")    != std::string::npos) return "amazon.com";
-    if (s == "gws" || s.find("gws/") != std::string::npos) return "google.com";
-    if (s.find("gfe/")       != std::string::npos) return "google.com";
-    if (s.find("gse/")       != std::string::npos) return "google.com";
-    if (s.find("esf")        != std::string::npos) return "google.com";
-    if (s == "cloudflare" || s.find("cloudflare-nginx") != std::string::npos) return "cloudflare.com";
-    if (s.find("microsoft-iis")    != std::string::npos) return "microsoft.com";
-    if (s.find("microsoft-httpapi")!= std::string::npos) return "microsoft.com";
-    if (s.find("yandex")     != std::string::npos) return "yandex.ru";
-    if (s.find("applehttpserver") != std::string::npos) return "apple.com";
-    return {};
 }
