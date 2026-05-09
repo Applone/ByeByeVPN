@@ -65,11 +65,11 @@ void save_write_stripped(const char* s, size_t n) {
 int tee_printf(const char* fmt, ...) {
     if (!fmt) return 0;
 
-    char buf_small[2048];
-
     va_list ap;
     va_start(ap, fmt);
 
+    char buf_small[2048];
+    // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
     int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap);
     va_end(ap);
 
@@ -81,7 +81,8 @@ int tee_printf(const char* fmt, ...) {
             std::vector<char> buf_big((size_t)needed + 1);
             va_list ap2;
             va_start(ap2, fmt);
-            vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
+            // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
+	    vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
             va_end(ap2);
             fwrite(buf_big.data(), 1, needed, stdout);
             if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)needed);
