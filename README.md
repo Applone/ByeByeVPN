@@ -25,7 +25,7 @@ Given an IP or hostname, run a remote detectability methodology focused on moder
 3. **TCP port scan**: Async non-blocking connect-scan 1-65535 or curated ports
 4. **UDP probes**: WireGuard and AmneziaWG handshake probes only
 5. **Service fingerprint + CT**: SSH, HTTP, TLS + SNI consistency, proxy exposure, proxy-header leak
-6. **Active probing (J3)**: multi-probe behaviour checks per TLS-like port
+6. **Active junk probing (J3)**: multi-probe behaviour checks per TLS-like port
 7. **Verdict**: Score 0-100, stack identification, hardening advice
 
 ## Build

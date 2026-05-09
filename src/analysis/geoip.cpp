@@ -9,7 +9,7 @@ GeoInfo geo_ipapi_is(const std::string& ip) {
     std::string url = "https://api.ipapi.is/";
     if (!ip.empty()) url += "?q=" + ip;
 
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;
@@ -51,7 +51,7 @@ GeoInfo geo_iplocate(const std::string& ip) {
     std::string url = "https://iplocate.io/api/lookup/";
     if (!ip.empty()) url += ip;
 
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;
@@ -99,7 +99,7 @@ GeoInfo geo_ipwho_is(const std::string& ip) {
     std::string url = "https://ipwho.is/";
     if (!ip.empty()) url += ip;
 
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;
@@ -133,7 +133,7 @@ GeoInfo geo_ipinfo_io(const std::string& ip) {
     if (!ip.empty()) url += ip;
     url += "/json";
 
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;
@@ -168,7 +168,7 @@ GeoInfo geo_freeipapi(const std::string& ip) {
     std::string url = "https://freeipapi.com/api/json/";
     if (!ip.empty()) url += ip;
 
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;
@@ -191,7 +191,7 @@ GeoInfo geo_2ip_ru(const std::string& ip) {
         url += "?ip=" + url_encode(ip);
     }
 
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;
@@ -222,7 +222,7 @@ GeoInfo geo_sypex(const std::string& ip) {
     g.source = "sypexgeo.net (RU)";
 
     std::string url = "https://api.sypexgeo.net/json/" + ip;
-    auto r = http_get(url, 7000, true);
+    auto r = http_get(url, 7000);
     if (!r.ok()) {
         g.err = "http " + std::to_string(r.status) + " " + r.err;
         return g;

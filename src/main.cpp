@@ -16,9 +16,14 @@
 #include <cstdio>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 
 #if __cplusplus >= 202002L && __has_include(<format>)
 #include <format>
@@ -41,6 +46,42 @@ bool try_parse_int(const string& s, int& out, const int min_v, const int max_v) 
     if (errno != 0 || endptr == s.c_str() || *endptr != '\0' || res < min_v || res > max_v) return false;
     out = static_cast<int>(res);
     return true;
+}
+
+void clamp_threads_to_nofile_limit() {
+#ifndef _WIN32
+    constexpr int kNofileReserve = 128;
+
+    rlimit lim{};
+    if (getrlimit(RLIMIT_NOFILE, &lim) != 0) return;
+    if (lim.rlim_cur == RLIM_INFINITY) return;
+
+    const rlim_t reserve = static_cast<rlim_t>(kNofileReserve);
+    if (lim.rlim_cur <= reserve) {
+        if (g_threads != 1) {
+            g_threads = 1;
+            fprintf(stderr,
+                    "warn: clamped --threads to %d due to RLIMIT_NOFILE soft=%llu (raise ulimit -n to allow more)\n",
+                    g_threads,
+                    static_cast<unsigned long long>(lim.rlim_cur));
+        }
+        return;
+    }
+
+    const rlim_t max_threads_rl = lim.rlim_cur - reserve;
+    const int max_threads =
+        max_threads_rl > static_cast<rlim_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(max_threads_rl);
+
+    if (g_threads > max_threads) {
+        g_threads = max_threads;
+        fprintf(stderr,
+                "warn: clamped --threads to %d due to RLIMIT_NOFILE soft=%llu (raise ulimit -n to allow more)\n",
+                g_threads,
+                static_cast<unsigned long long>(lim.rlim_cur));
+    }
+#endif
 }
 
 int parse_int_fatal(const char* s, const char* name, const int min_v, const int max_v) {
@@ -158,7 +199,7 @@ void help() {
 
     tee_printf("Tuning:\n");
     tee_printf("  --threads N     parallel TCP connects   (default 1200)\n");
-    tee_printf("  --tcp-to MS     TCP connect timeout      (default 500)\n");
+    tee_printf("  --tcp-to MS     TCP connect timeout      (default 1000)\n");
     tee_printf("  --udp-to MS     UDP recv timeout         (default 900)\n");
     tee_printf("  --syn           Linux-only TCP SYN half-open scan\n");
     tee_printf("  --no-color      disable ANSI colors\n");
@@ -472,6 +513,8 @@ int main_impl(int argc, char** argv) {
             pos.push_back(a);
         }
     }
+
+    clamp_threads_to_nofile_limit();
 
     if (g_save_requested) {
         const string target = extract_target_arg(pos);

@@ -69,12 +69,6 @@ std::string ssl_error_message(SSL* ssl, int rc, const char* op) {
     return msg;
 }
 
-bool is_openssl_store_loader_error(const std::string& msg) {
-    const std::string lower = tolower_s(msg);
-    return lower.find("unregistered scheme") != std::string::npos ||
-           lower.find("store routines") != std::string::npos;
-}
-
 #ifdef _WIN32
 bool load_windows_root_cas_into_store(X509_STORE* store) {
     if (!store) return false;
@@ -155,7 +149,7 @@ bool configure_tls_ctx(SSL_CTX* ctx) {
 
 } // namespace
 
-HttpResp http_get(const std::string& url, int timeout_ms, bool allow_insecure_tls_fallback) {
+HttpResp http_get(const std::string& url, int timeout_ms) {
     HttpResp r;
     auto t0 = std::chrono::steady_clock::now();
 
@@ -263,124 +257,81 @@ HttpResp http_get(const std::string& url, int timeout_ms, bool allow_insecure_tl
     SSL* raw_ssl = nullptr;
 
     if (is_https) {
-        bool verify_peer = true;
-        bool fallback_used = false;
+        raw_ctx = SSL_CTX_new(TLS_client_method());
+        if (!raw_ctx) {
+            r.err = "ssl_ctx_new";
+            close_socket();
+            return r;
+        }
 
-        while (true) {
-            raw_ctx = SSL_CTX_new(TLS_client_method());
-            if (!raw_ctx) {
-                r.err = "ssl_ctx_new";
-                close_socket();
-                return r;
-            }
+        if (!configure_tls_ctx(raw_ctx)) {
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            r.err = "ssl_trust_store";
+            close_socket();
+            return r;
+        }
 
-            if (verify_peer) {
-                if (!configure_tls_ctx(raw_ctx)) {
-                    SSL_CTX_free(raw_ctx);
-                    raw_ctx = nullptr;
+        raw_ssl = SSL_new(raw_ctx);
+        if (!raw_ssl) {
+            r.err = "ssl_new";
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            close_socket();
+            return r;
+        }
 
-                    if (allow_insecure_tls_fallback && !fallback_used) {
-                        verify_peer = false;
-                        fallback_used = true;
-                        if (g_verbose) {
-                            fprintf(stderr, "  https: trust store unavailable, retrying without cert verify\n");
-                        }
-                        continue;
-                    }
+        if (!ssl_attach_socket(raw_ssl, s, &r.err)) {
+            r.err = "ssl_set_fd " + r.err;
+            SSL_free(raw_ssl);
+            raw_ssl = nullptr;
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            close_socket();
+            return r;
+        }
 
-                    r.err = "ssl_trust_store";
-                    close_socket();
-                    return r;
-                }
-            } else {
-                SSL_CTX_set_min_proto_version(raw_ctx, TLS1_2_VERSION);
-                SSL_CTX_set_verify(raw_ctx, SSL_VERIFY_NONE, nullptr);
-            }
+        if (SSL_set_tlsext_host_name(raw_ssl, host.c_str()) != 1) {
+            r.err = "ssl_set_sni";
+            SSL_free(raw_ssl);
+            raw_ssl = nullptr;
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            close_socket();
+            return r;
+        }
 
-            raw_ssl = SSL_new(raw_ctx);
-            if (!raw_ssl) {
-                r.err = "ssl_new";
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-                close_socket();
-                return r;
-            }
+        X509_VERIFY_PARAM* param = SSL_get0_param(raw_ssl);
+        if (!param || X509_VERIFY_PARAM_set1_host(param, host.c_str(), host.size()) != 1) {
+            r.err = "ssl_set_host";
+            SSL_free(raw_ssl);
+            raw_ssl = nullptr;
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            close_socket();
+            return r;
+        }
 
-            if (!ssl_attach_socket(raw_ssl, s, &r.err)) {
-                r.err = "ssl_set_fd " + r.err;
-                SSL_free(raw_ssl);
-                raw_ssl = nullptr;
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-                close_socket();
-                return r;
-            }
+        const int conn_rc = SSL_connect(raw_ssl);
+        if (conn_rc != 1) {
+            r.err = ssl_error_message(raw_ssl, conn_rc, "ssl_connect");
+            SSL_free(raw_ssl);
+            raw_ssl = nullptr;
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            close_socket();
+            return r;
+        }
 
-            if (SSL_set_tlsext_host_name(raw_ssl, host.c_str()) != 1) {
-                r.err = "ssl_set_sni";
-                SSL_free(raw_ssl);
-                raw_ssl = nullptr;
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-                close_socket();
-                return r;
-            }
-
-            if (verify_peer) {
-                X509_VERIFY_PARAM* param = SSL_get0_param(raw_ssl);
-                if (!param || X509_VERIFY_PARAM_set1_host(param, host.c_str(), host.size()) != 1) {
-                    r.err = "ssl_set_host";
-                    SSL_free(raw_ssl);
-                    raw_ssl = nullptr;
-                    SSL_CTX_free(raw_ctx);
-                    raw_ctx = nullptr;
-                    close_socket();
-                    return r;
-                }
-            }
-
-            const int conn_rc = SSL_connect(raw_ssl);
-            if (conn_rc != 1) {
-                std::string conn_err = ssl_error_message(raw_ssl, conn_rc, "ssl_connect");
-
-                SSL_free(raw_ssl);
-                raw_ssl = nullptr;
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-
-                if (verify_peer && allow_insecure_tls_fallback && !fallback_used &&
-                    is_openssl_store_loader_error(conn_err)) {
-                    verify_peer = false;
-                    fallback_used = true;
-                    close_socket();
-                    if (!connect_socket()) {
-                        return r;
-                    }
-                    if (g_verbose) {
-                        fprintf(stderr, "  https: OpenSSL store-loader error, retrying without cert verify\n");
-                    }
-                    continue;
-                }
-
-                r.err = std::move(conn_err);
-                close_socket();
-                return r;
-            }
-
-            if (verify_peer) {
-                long verify = SSL_get_verify_result(raw_ssl);
-                if (verify != X509_V_OK) {
-                    r.err = "ssl_verify " + std::to_string(verify);
-                    SSL_free(raw_ssl);
-                    raw_ssl = nullptr;
-                    SSL_CTX_free(raw_ctx);
-                    raw_ctx = nullptr;
-                    close_socket();
-                    return r;
-                }
-            }
-
-            break;
+        long verify = SSL_get_verify_result(raw_ssl);
+        if (verify != X509_V_OK) {
+            r.err = "ssl_verify " + std::to_string(verify);
+            SSL_free(raw_ssl);
+            raw_ssl = nullptr;
+            SSL_CTX_free(raw_ctx);
+            raw_ctx = nullptr;
+            close_socket();
+            return r;
         }
     }
 

@@ -30,6 +30,7 @@
 #include <mswsock.h>
 #else
 #include <arpa/inet.h>
+#include <csignal>
 #include <errno.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
@@ -412,7 +413,7 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
     }
 
     std::unordered_map<OVERLAPPED*, std::unique_ptr<IocpConn>> active;
-    std::vector<std::unique_ptr<IocpConn>> retired;
+    std::unordered_map<OVERLAPPED*, std::unique_ptr<IocpConn>> retired;
     active.reserve(static_cast<size_t>(max_inflight) * 2 + 16);
     retired.reserve(static_cast<size_t>(max_inflight) * 2 + 16);
 
@@ -536,6 +537,11 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
 
                 closesocket(done->sock);
                 mark_done();
+            } else {
+                auto rit = retired.find(ov);
+                if (rit != retired.end()) {
+                    retired.erase(rit);
+                }
             }
         }
 
@@ -549,7 +555,7 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
                 CancelIoEx(reinterpret_cast<HANDLE>(done->sock), &done->ov);
                 closesocket(done->sock);
                 done->sock = INVALID_SOCKET;
-                retired.push_back(std::move(done));
+                retired.emplace(&done->ov, std::move(done));
 
                 ++out.timeouts;
                 mark_done();
@@ -569,16 +575,23 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
                 closesocket(conn->sock);
                 conn->sock = INVALID_SOCKET;
             }
-            retired.push_back(std::move(conn));
+            retired.emplace(&conn->ov, std::move(conn));
         }
     }
 
-    const auto drain_deadline = Clock::now() + std::chrono::milliseconds(200);
+    constexpr int kRetiredDrainTimeoutMs = 1000;
+    const auto drain_deadline = Clock::now() + std::chrono::milliseconds(kRetiredDrainTimeoutMs);
     while (!retired.empty() && Clock::now() < drain_deadline) {
         DWORD bytes = 0;
         ULONG_PTR key = 0;
         OVERLAPPED* ov = nullptr;
         const BOOL got = GetQueuedCompletionStatus(iocp, &bytes, &key, &ov, 20);
+        if (ov != nullptr) {
+            auto rit = retired.find(ov);
+            if (rit != retired.end()) {
+                retired.erase(rit);
+            }
+        }
         if (!got && ov == nullptr && GetLastError() == WAIT_TIMEOUT) {
             break;
         }
@@ -625,6 +638,44 @@ struct SynPending {
     int port = 0;
     uint16_t src_port = 0;
     Clock::time_point sent{};
+};
+
+std::atomic<bool>* g_syn_abort_flag = nullptr;
+
+void syn_abort_signal_handler(int) {
+    if (g_syn_abort_flag != nullptr) {
+        g_syn_abort_flag->store(true, std::memory_order_relaxed);
+    }
+}
+
+class SynAbortSignalGuard {
+public:
+    explicit SynAbortSignalGuard(std::atomic<bool>& flag) {
+        g_syn_abort_flag = &flag;
+
+        std::memset(&new_action_, 0, sizeof(new_action_));
+        new_action_.sa_handler = syn_abort_signal_handler;
+        sigemptyset(&new_action_.sa_mask);
+
+        if (sigaction(SIGINT, &new_action_, &old_int_) == 0 &&
+            sigaction(SIGTERM, &new_action_, &old_term_) == 0) {
+            installed_ = true;
+        }
+    }
+
+    ~SynAbortSignalGuard() {
+        if (installed_) {
+            sigaction(SIGINT, &old_int_, nullptr);
+            sigaction(SIGTERM, &old_term_, nullptr);
+        }
+        g_syn_abort_flag = nullptr;
+    }
+
+private:
+    bool installed_ = false;
+    struct sigaction new_action_ {};
+    struct sigaction old_int_ {};
+    struct sigaction old_term_ {};
 };
 
 bool resolve_ipv4_target(const std::string& host, sockaddr_in& out) {
@@ -767,6 +818,8 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
 
     uint16_t src_port_cursor = 40000;
     std::mt19937 rng{std::random_device{}()};
+    std::atomic<bool> aborted{false};
+    SynAbortSignalGuard abort_guard(aborted);
 
     auto mark_done = [&out, global_scanned]() {
         ++out.scanned;
@@ -784,15 +837,10 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
     size_t next_idx = 0;
 
     while (next_idx < ports.size() || !pending.empty()) {
-#ifdef _WIN32
-        if (_kbhit()) {
-            const int c = _getch();
-            if (c == 'q' || c == 'Q' || c == 27) {
-                out.aborted = true;
-                break;
-            }
+        if (aborted.load(std::memory_order_relaxed)) {
+            out.aborted = true;
+            break;
         }
-#endif
 
         while (next_idx < ports.size() && static_cast<int>(pending.size()) < max_inflight) {
             const int port = ports[next_idx++];
@@ -920,13 +968,17 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
             inflight_total,
             inflight_per_worker,
             timeout_ms);
+#ifdef _WIN32
     fprintf(stderr, "  (press 'q' to skip this phase)\n");
+#endif
 
     std::atomic<bool> stop_flag{false};
     std::atomic<size_t> progress_scanned{0};
     std::atomic<size_t> progress_open{0};
 
+#ifdef _WIN32
     while (_kbhit()) _getch();
+#endif
 
     ThreadPool pool(workers);
     std::vector<std::future<WorkerResult>> futures;

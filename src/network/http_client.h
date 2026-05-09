@@ -12,7 +12,6 @@ struct HttpResp {
 };
 
 HttpResp http_get(const std::string& url,
-                  int timeout_ms = 7000,
-                  bool allow_insecure_tls_fallback = false);
+                  int timeout_ms = 7000);
 
 #endif // NETWORK_HTTP_CLIENT_H

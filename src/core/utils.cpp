@@ -16,7 +16,7 @@ using std::vector;
 bool g_no_color = false;
 bool g_verbose  = false;
 int  g_threads  = 1200;
-int  g_tcp_to   = 500;
+int  g_tcp_to   = 1000;
 int  g_udp_to   = 900;
 bool g_stealth    = false;
 bool g_no_geoip   = false;
@@ -73,19 +73,31 @@ int tee_printf(const char* fmt, ...) {
     int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap);
     va_end(ap);
 
-    if (needed > 0) {
-        if (needed < (int)sizeof(buf_small)) {
-            fwrite(buf_small, 1, needed, stdout);
-            if (g_save_fp) save_write_stripped(buf_small, (size_t)needed);
-        } else {
-            std::vector<char> buf_big((size_t)needed + 1);
-            va_list ap2;
-            va_start(ap2, fmt);
-            // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
-	        vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
-            va_end(ap2);
-            fwrite(buf_big.data(), 1, needed, stdout);
-            if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)needed);
+    if (needed < 0) {
+        return needed;
+    }
+
+    if (needed == 0) {
+        return 0;
+    }
+
+    if (needed < (int)sizeof(buf_small)) {
+        fwrite(buf_small, 1, needed, stdout);
+        if (g_save_fp) save_write_stripped(buf_small, (size_t)needed);
+    } else {
+        std::vector<char> buf_big((size_t)needed + 1);
+        va_list ap2;
+        va_start(ap2, fmt);
+        // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
+        const int ret2 = vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
+        va_end(ap2);
+        if (ret2 < 0) {
+            return ret2;
+        }
+
+        if (ret2 > 0) {
+            fwrite(buf_big.data(), 1, (size_t)ret2, stdout);
+            if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)ret2);
         }
     }
     return needed;

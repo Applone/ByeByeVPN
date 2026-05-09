@@ -3,6 +3,7 @@
 #include <openssl/rand.h>
 
 #include <array>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -14,7 +15,8 @@ UdpResult rng_error() {
 }
 
 bool fill_random(unsigned char* data, const std::size_t size) {
-    if (!data || size == 0) return true;
+    if (!data || size == 0) return false;
+    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
     return RAND_bytes(data, static_cast<int>(size)) == 1;
 }
 
