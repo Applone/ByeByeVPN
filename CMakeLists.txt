@@ -148,5 +148,12 @@ if(BYEBYEVPN_ENABLE_TESTS AND BUILD_TESTING)
     )
     FetchContent_MakeAvailable(catch2)
 
+    if(TARGET Catch2)
+        byebyevpn_apply_sanitizers(Catch2)
+    endif()
+    if(TARGET Catch2WithMain)
+        byebyevpn_apply_sanitizers(Catch2WithMain)
+    endif()
+
     add_subdirectory(tests)
 endif()
