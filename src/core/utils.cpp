@@ -82,7 +82,7 @@ int tee_printf(const char* fmt, ...) {
             va_list ap2;
             va_start(ap2, fmt);
             // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
-	    vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
+	        vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
             va_end(ap2);
             fwrite(buf_big.data(), 1, needed, stdout);
             if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)needed);
@@ -121,7 +121,7 @@ void banner() {
     tee_puts("|____/ \\__, |\\___|____/ \\__, |\\___| \\_/  |_|   |_| \\_|");
     tee_puts("       |___/            |___/                          ");
     tee_printf("%s", col(C::RST));
-    tee_printf("%s  Full TSPU/DPI/VPN detectability scanner  v2.5.7%s\n\n",
+    tee_printf("%s  VPN detectability scanner  v1.1.0%s\n\n",
            col(C::DIM), col(C::RST));
 }
 

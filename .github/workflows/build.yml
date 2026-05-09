@@ -99,7 +99,31 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang lld
+          sudo apt-get install -y cmake ninja-build clang lld perl make curl
+
+      - name: Build OpenSSL (ASan+UBSan)
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          set -euxo pipefail
+          OPENSSL_VERSION=3.3.2
+          OPENSSL_PREFIX="$GITHUB_WORKSPACE/deps/openssl-asan"
+          SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+
+          mkdir -p "$GITHUB_WORKSPACE/deps"
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "$GITHUB_WORKSPACE/deps/openssl.tar.gz"
+          tar -xzf "$GITHUB_WORKSPACE/deps/openssl.tar.gz" -C "$GITHUB_WORKSPACE/deps"
+
+          cd "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}"
+          export CFLAGS="$SAN_FLAGS"
+          export CXXFLAGS="$SAN_FLAGS"
+          export LDFLAGS="$SAN_FLAGS"
+          ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
+            --prefix="$OPENSSL_PREFIX" \
+            --openssldir="$OPENSSL_PREFIX/ssl"
+          make -j"$(nproc)"
+          make install_sw
 
       - name: Configure CMake (ASan+UBSan)
         env:
@@ -111,6 +135,7 @@ jobs:
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_ENABLE_ASAN=ON \
             -DBYEBYEVPN_ENABLE_UBSAN=ON \
+            -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/deps/openssl-asan" \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
 
       - name: Build (ASan+UBSan)
@@ -130,7 +155,31 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang lld
+          sudo apt-get install -y cmake ninja-build clang lld perl make curl
+
+      - name: Build OpenSSL (MSan)
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          set -euxo pipefail
+          OPENSSL_VERSION=3.3.2
+          OPENSSL_PREFIX="$GITHUB_WORKSPACE/deps/openssl-msan"
+          SAN_FLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
+
+          mkdir -p "$GITHUB_WORKSPACE/deps"
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "$GITHUB_WORKSPACE/deps/openssl.tar.gz"
+          tar -xzf "$GITHUB_WORKSPACE/deps/openssl.tar.gz" -C "$GITHUB_WORKSPACE/deps"
+
+          cd "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}"
+          export CFLAGS="$SAN_FLAGS"
+          export CXXFLAGS="$SAN_FLAGS"
+          export LDFLAGS="$SAN_FLAGS"
+          ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
+            --prefix="$OPENSSL_PREFIX" \
+            --openssldir="$OPENSSL_PREFIX/ssl"
+          make -j"$(nproc)"
+          make install_sw
 
       - name: Configure CMake (MSan)
         env:
@@ -141,6 +190,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_ENABLE_MSAN=ON \
+            -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/deps/openssl-msan" \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
 
       - name: Build (MSan)
@@ -150,8 +200,8 @@ jobs:
         run: ctest --test-dir build-msan --output-on-failure
 
   sanitizer-tsan:
-    name: Sanitizer TSan (Linux, Optional)
-    if: ${{ !startsWith(github.ref, 'refs/tags/') && vars.BYEBYEVPN_ENABLE_TSAN == 'true' }}
+    name: Sanitizer TSan (Linux)
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     needs: [debug-build-test]
     runs-on: ubuntu-latest
     steps:
@@ -160,7 +210,31 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang lld
+          sudo apt-get install -y cmake ninja-build clang lld perl make curl
+
+      - name: Build OpenSSL (TSan)
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          set -euxo pipefail
+          OPENSSL_VERSION=3.3.2
+          OPENSSL_PREFIX="$GITHUB_WORKSPACE/deps/openssl-tsan"
+          SAN_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+
+          mkdir -p "$GITHUB_WORKSPACE/deps"
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "$GITHUB_WORKSPACE/deps/openssl.tar.gz"
+          tar -xzf "$GITHUB_WORKSPACE/deps/openssl.tar.gz" -C "$GITHUB_WORKSPACE/deps"
+
+          cd "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}"
+          export CFLAGS="$SAN_FLAGS"
+          export CXXFLAGS="$SAN_FLAGS"
+          export LDFLAGS="$SAN_FLAGS"
+          ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
+            --prefix="$OPENSSL_PREFIX" \
+            --openssldir="$OPENSSL_PREFIX/ssl"
+          make -j"$(nproc)"
+          make install_sw
 
       - name: Configure CMake (TSan)
         env:
@@ -171,6 +245,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_ENABLE_TSAN=ON \
+            -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/deps/openssl-tsan" \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
 
       - name: Build (TSan)
