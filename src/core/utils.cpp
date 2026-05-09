@@ -65,10 +65,11 @@ void save_write_stripped(const char* s, size_t n) {
 int tee_printf(const char* fmt, ...) {
     if (!fmt) return 0;
 
+    char buf_small[2048];
+
     va_list ap;
     va_start(ap, fmt);
 
-    char buf_small[2048];
     int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap);
     va_end(ap);
 
