@@ -71,8 +71,8 @@ Resolved resolve_host(const std::string& host) {
                 v6_ips.push_back(ip);
         }
     }
-    for (auto& s: v4_ips) r.ips.push_back(s);
-    for (auto& s: v6_ips) r.ips.push_back(s);
+    for (const auto& s : v4_ips) r.ips.push_back(s);
+    for (const auto& s : v6_ips) r.ips.push_back(s);
     if (!r.ips.empty()) r.primary_ip = r.ips.front();
     bool has4 = !v4_ips.empty(), has6 = !v6_ips.empty();
     r.family = (has4 && has6) ? "mixed(v4-preferred)"

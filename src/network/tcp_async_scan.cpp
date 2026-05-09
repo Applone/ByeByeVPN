@@ -636,7 +636,7 @@ bool resolve_ipv4_target(const std::string& host, sockaddr_in& out) {
     if (getaddrinfo(host.c_str(), "1", &hints, &ai) != 0 || !ai) return false;
 
     bool ok = false;
-    for (auto* p = ai; p; p = p->ai_next) {
+    for (const auto* p = ai; p; p = p->ai_next) {
         if (p->ai_family == AF_INET) {
             std::memcpy(&out, p->ai_addr, sizeof(sockaddr_in));
             ok = true;

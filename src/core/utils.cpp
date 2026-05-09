@@ -177,7 +177,8 @@ string url_encode(const string& s) {
 namespace JSON {
     struct Value {
         std::string s;
-        std::vector<std::pair<std::string, Value>> o;
+        std::map<std::string, Value> o;
+        std::vector<std::string> order;
         std::vector<Value> a;
         bool is_obj = false, is_arr = false;
     };
@@ -216,7 +217,8 @@ namespace JSON {
             while (i < b.size() && b[i] != '}') {
                 Value key = parse(b, i);
                 while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ':')) i++;
-                v.o.emplace_back(key.s, parse(b, i));
+                if (v.o.find(key.s) == v.o.end()) v.order.push_back(key.s);
+                v.o[key.s] = parse(b, i);
                 while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ',')) i++;
             }
             if (i < b.size()) i++;
@@ -237,11 +239,13 @@ namespace JSON {
 
     static std::string find_key(const Value& v, const std::string& key) {
         if (v.is_obj) {
-            for (const auto& pair : v.o) {
-                if (pair.first == key) return pair.second.s;
-            }
-            for (const auto& pair : v.o) {
-                std::string r = find_key(pair.second, key);
+            const auto it = std::find_if(v.o.begin(), v.o.end(),
+                                         [&](const auto& kv) { return kv.first == key; });
+            if (it != v.o.end()) return it->second.s;
+            for (const auto& child_key : v.order) {
+                const auto child_it = v.o.find(child_key);
+                if (child_it == v.o.end()) continue;
+                std::string r = find_key(child_it->second, key);
                 if (!r.empty()) return r;
             }
         }
