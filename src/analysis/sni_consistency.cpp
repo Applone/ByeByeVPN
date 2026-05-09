@@ -1,6 +1,7 @@
 #include "sni_consistency.h"
 #include "../network/tls_probe.h"
 #include "brand_cert.h"
+#include <algorithm>
 #include <set>
 #include <cstring>
 #include "../core/utils.h"

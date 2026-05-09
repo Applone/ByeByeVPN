@@ -111,7 +111,8 @@ std::string cert_claims_brand(const std::string& subject_cn, const std::vector<s
     auto is_brand = [](const std::string& name)->const char*{
         if (name.empty()) return nullptr;
         std::string ln = name;
-        std::transform(ln.begin(), ln.end(), ln.begin(), [](unsigned char c){ return std::tolower(c); });
+        std::transform(ln.begin(), ln.end(), ln.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (ln.size() > 2 && ln[0]=='*' && ln[1]=='.') ln = ln.substr(2);
         for (size_t i=0;i<BRAND_TABLE_N;++i) {
             if (ln == BRAND_TABLE[i].brand) return BRAND_TABLE[i].brand;
@@ -140,11 +141,13 @@ bool asn_owns_brand(const std::string& brand_domain, const std::vector<std::stri
     }
     if (!markers) return false;
     std::string ms = markers;
-    std::transform(ms.begin(), ms.end(), ms.begin(), [](unsigned char c){ return std::tolower(c); });
+    std::transform(ms.begin(), ms.end(), ms.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<std::string> parts = split(ms, ',');
     for (const auto& org : asn_orgs) {
         std::string lo = org;
-        std::transform(lo.begin(), lo.end(), lo.begin(), [](unsigned char c){ return std::tolower(c); });
+        std::transform(lo.begin(), lo.end(), lo.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (std::any_of(parts.begin(), parts.end(), [&](const std::string& m) {
                 std::string mm = trim(m);
                 return !mm.empty() && lo.find(mm) != std::string::npos;

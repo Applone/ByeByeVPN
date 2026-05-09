@@ -126,7 +126,8 @@ void banner() {
 }
 
 string tolower_s(string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 bool contains(const string& h, const string& n) { return h.find(n) != string::npos; }
