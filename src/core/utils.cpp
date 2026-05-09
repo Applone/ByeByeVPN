@@ -63,26 +63,32 @@ void save_write_stripped(const char* s, size_t n) {
 }
 
 int tee_printf(const char* fmt, ...) {
+    if (!fmt) return 0;
+
     va_list ap;
     va_start(ap, fmt);
-    int n = vprintf(fmt, ap);
+
+    va_list ap2;
+    va_copy(ap2, ap);
+
+    char buf_small[2048];
+    int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap);
     va_end(ap);
-    if (g_save_fp && fmt) {
-        char buf_small[2048];
-        va_list ap2; va_start(ap2, fmt);
-        int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap2);
-        va_end(ap2);
-        if (needed > 0 && needed < (int)sizeof(buf_small)) {
-            save_write_stripped(buf_small, (size_t)needed);
-        } else if (needed >= (int)sizeof(buf_small)) {
+
+    if (needed > 0) {
+        if (needed < (int)sizeof(buf_small)) {
+            fwrite(buf_small, 1, needed, stdout);
+            if (g_save_fp) save_write_stripped(buf_small, (size_t)needed);
+        } else {
             std::vector<char> buf_big((size_t)needed + 1);
-            va_list ap3; va_start(ap3, fmt);
-            vsnprintf(buf_big.data(), buf_big.size(), fmt, ap3);
-            va_end(ap3);
-            save_write_stripped(buf_big.data(), (size_t)needed);
+            vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
+            fwrite(buf_big.data(), 1, needed, stdout);
+            if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)needed);
         }
     }
-    return n;
+
+    va_end(ap2);
+    return needed;
 }
 
 int tee_puts(const char* s) {
