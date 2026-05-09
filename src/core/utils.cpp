@@ -68,9 +68,6 @@ int tee_printf(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
 
-    va_list ap2;
-    va_copy(ap2, ap);
-
     char buf_small[2048];
     int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap);
     va_end(ap);
@@ -81,13 +78,14 @@ int tee_printf(const char* fmt, ...) {
             if (g_save_fp) save_write_stripped(buf_small, (size_t)needed);
         } else {
             std::vector<char> buf_big((size_t)needed + 1);
+            va_list ap2;
+            va_start(ap2, fmt);
             vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
+            va_end(ap2);
             fwrite(buf_big.data(), 1, needed, stdout);
             if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)needed);
         }
     }
-
-    va_end(ap2);
     return needed;
 }
 
