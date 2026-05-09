@@ -38,6 +38,23 @@ using std::set;
 using std::string;
 using std::vector;
 
+class Cleanup {
+public:
+    ~Cleanup() {
+        if (g_save_fp) {
+            fprintf(g_save_fp, "```\n");
+            fclose(g_save_fp);
+            g_save_fp = nullptr;
+        }
+        openssl_runtime_cleanup();
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        fflush(stdout);
+        fflush(stderr);
+    }
+};
+
 bool try_parse_int(const string& s, int& out, const int min_v, const int max_v) {
     if (s.empty()) return false;
     char* endptr = nullptr;
@@ -435,24 +452,34 @@ int main_impl(int argc, char** argv) {
     }
 #endif
 
-    const auto early_return = [&](int code) {
-#ifdef _WIN32
-        WSACleanup();
-#endif
-        openssl_runtime_cleanup();
-        fflush(stdout);
-        fflush(stderr);
-        return code;
-    };
+    Cleanup cleanup_guard;
 
     vector<string> pos;
     for (int i = 1; i < argc; ++i) {
         const string a = argv[i];
         if (a == "--no-color") g_no_color = true;
         else if (a == "--verbose" || a == "-v") g_verbose = true;
-        else if (a == "--threads" && i + 1 < argc) g_threads = parse_int_fatal(argv[++i], "--threads", 1, 10000);
-        else if (a == "--tcp-to" && i + 1 < argc) g_tcp_to = parse_int_fatal(argv[++i], "--tcp-to", 1, 60000);
-        else if (a == "--udp-to" && i + 1 < argc) g_udp_to = parse_int_fatal(argv[++i], "--udp-to", 1, 60000);
+        else if (a == "--threads") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --threads requires a value\n");
+                return 1;
+            }
+            g_threads = parse_int_fatal(argv[++i], "--threads", 1, 10000);
+        }
+        else if (a == "--tcp-to") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --tcp-to requires a value\n");
+                return 1;
+            }
+            g_tcp_to = parse_int_fatal(argv[++i], "--tcp-to", 1, 60000);
+        }
+        else if (a == "--udp-to") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --udp-to requires a value\n");
+                return 1;
+            }
+            g_udp_to = parse_int_fatal(argv[++i], "--udp-to", 1, 60000);
+        }
         else if (a == "--syn") g_tcp_syn_scan = true;
         else if (a == "--stealth") {
             g_stealth = true;
@@ -480,21 +507,31 @@ int main_impl(int argc, char** argv) {
             g_port_mode = PortMode::FULL;
         } else if (a == "--fast") {
             g_port_mode = PortMode::FAST;
-        } else if (a == "--range" && i + 1 < argc) {
+        } else if (a == "--range") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --range requires a value in format start-end\n");
+                return 1;
+            }
             const string v = argv[++i];
             const size_t dash = v.find('-');
-            if (dash != string::npos) {
-                g_range_lo = parse_int_fatal(v.substr(0, dash).c_str(), "range start", 1, 65535);
-                g_range_hi = parse_int_fatal(v.substr(dash + 1).c_str(), "range end", 1, 65535);
-                if (g_range_lo > g_range_hi) {
-                    fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
-                    fflush(stderr);
-                    return early_return(1);
-                }
-                g_port_mode = PortMode::RANGE;
+            if (dash == string::npos || dash == 0 || dash == v.size() - 1) {
+                fprintf(stderr, "Error: invalid --range format '%s' (expected start-end, e.g., 1000-2000)\n", v.c_str());
+                return 1;
             }
-        } else if (a == "--ports" && i + 1 < argc) {
-            const string v = argv[++i];
+            g_range_lo = parse_int_fatal(v.substr(0, dash).c_str(), "range start", 1, 65535);
+            g_range_hi = parse_int_fatal(v.substr(dash + 1).c_str(), "range end", 1, 65535);
+            if (g_range_lo > g_range_hi) {
+                fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
+                return 1;
+            }
+            g_port_mode = PortMode::RANGE;
+        } else if (a == "--ports") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --ports requires a comma-separated list of ports\n");
+                return 1;
+            }
+            ++i;
+            const string v = argv[i];
             g_port_list.clear();
             size_t p = 0;
             while (p < v.size()) {
@@ -507,8 +544,7 @@ int main_impl(int argc, char** argv) {
             if (!g_port_list.empty()) g_port_mode = PortMode::LIST;
         } else if (a == "--help" || a == "-h" || a == "/?") {
             help();
-            fflush(stdout);
-            return early_return(0);
+            return 0;
         } else {
             pos.push_back(a);
         }
@@ -536,7 +572,7 @@ int main_impl(int argc, char** argv) {
                         lt->tm_hour, lt->tm_min, lt->tm_sec);
             }
             if (!target.empty()) fprintf(g_save_fp, "**Target:** `%s`  \n", target.c_str());
-            fprintf(g_save_fp, "**Scanner version:** v3.0.0  \n\n");
+            fprintf(g_save_fp, "**Scanner version:** v1.1.0  \n\n");
             fprintf(g_save_fp, "```\n");
         }
     }
@@ -674,20 +710,8 @@ int main_impl(int argc, char** argv) {
 
  done:
     if (g_save_fp) {
-        fprintf(g_save_fp, "```\n");
-        fclose(g_save_fp);
-        g_save_fp = nullptr;
         fprintf(stderr, "saved to %s\n", g_save_path.c_str());
     }
-
-    openssl_runtime_cleanup();
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
-
-    fflush(stdout);
-    fflush(stderr);
     return rc;
 }
 
@@ -696,13 +720,9 @@ int main(int argc, char** argv) {
         return main_impl(argc, argv);
     } catch (const std::exception& e) {
         fprintf(stderr, "fatal: %s\n", e.what());
-        fflush(stdout);
-        fflush(stderr);
         return 1;
     } catch (...) {
         fprintf(stderr, "fatal: unknown exception\n");
-        fflush(stdout);
-        fflush(stderr);
         return 1;
     }
 }

@@ -25,6 +25,24 @@
 
 namespace {
 
+bool is_ipv4_literal(const std::string& s) {
+    int dots = 0;
+    for (char c : s) {
+        if (c == '.') {
+            ++dots;
+        } else if (!std::isdigit(static_cast<unsigned char>(c))) {
+            return false;
+        }
+    }
+    return dots == 3;
+}
+
+bool is_ip_literal(const std::string& host) {
+    if (host.empty()) return false;
+    if (host[0] == '[') return false;
+    return is_ipv4_literal(host) || host.find(':') != std::string::npos;
+}
+
 bool parse_http_port(const std::string& text, int& port) {
     if (text.empty()) return false;
     if (!std::all_of(text.begin(), text.end(), [](char c) {
@@ -176,10 +194,25 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
         return r;
     }
 
-    const size_t slash = u.find('/');
-    if (slash != std::string::npos) {
-        host = u.substr(0, slash);
-        path = u.substr(slash);
+    size_t split_pos = std::string::npos;
+    const size_t slash_pos = u.find('/');
+    const size_t query_pos = u.find('?');
+    const size_t frag_pos = u.find('#');
+
+    split_pos = slash_pos;
+    if (query_pos != std::string::npos && (split_pos == std::string::npos || query_pos < split_pos)) {
+        split_pos = query_pos;
+    }
+    if (frag_pos != std::string::npos && (split_pos == std::string::npos || frag_pos < split_pos)) {
+        split_pos = frag_pos;
+    }
+
+    if (split_pos != std::string::npos) {
+        host = u.substr(0, split_pos);
+        path = u.substr(split_pos);
+        if (path[0] != '/') {
+            path = "/" + path;
+        }
     } else {
         host = u;
     }
@@ -291,8 +324,23 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
             return r;
         }
 
-        if (SSL_set_tlsext_host_name(raw_ssl, host.c_str()) != 1) {
-            r.err = "ssl_set_sni";
+        const bool is_ip = is_ip_literal(host);
+
+        if (!is_ip) {
+            if (SSL_set_tlsext_host_name(raw_ssl, host.c_str()) != 1) {
+                r.err = "ssl_set_sni";
+                SSL_free(raw_ssl);
+                raw_ssl = nullptr;
+                SSL_CTX_free(raw_ctx);
+                raw_ctx = nullptr;
+                close_socket();
+                return r;
+            }
+        }
+
+        X509_VERIFY_PARAM* param = SSL_get0_param(raw_ssl);
+        if (!param) {
+            r.err = "ssl_get_param";
             SSL_free(raw_ssl);
             raw_ssl = nullptr;
             SSL_CTX_free(raw_ctx);
@@ -301,15 +349,26 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
             return r;
         }
 
-        X509_VERIFY_PARAM* param = SSL_get0_param(raw_ssl);
-        if (!param || X509_VERIFY_PARAM_set1_host(param, host.c_str(), host.size()) != 1) {
-            r.err = "ssl_set_host";
-            SSL_free(raw_ssl);
-            raw_ssl = nullptr;
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            close_socket();
-            return r;
+        if (is_ip) {
+            if (X509_VERIFY_PARAM_set1_ip_asc(param, host.c_str()) != 1) {
+                r.err = "ssl_set_ip";
+                SSL_free(raw_ssl);
+                raw_ssl = nullptr;
+                SSL_CTX_free(raw_ctx);
+                raw_ctx = nullptr;
+                close_socket();
+                return r;
+            }
+        } else {
+            if (X509_VERIFY_PARAM_set1_host(param, host.c_str(), host.size()) != 1) {
+                r.err = "ssl_set_host";
+                SSL_free(raw_ssl);
+                raw_ssl = nullptr;
+                SSL_CTX_free(raw_ctx);
+                raw_ctx = nullptr;
+                close_socket();
+                return r;
+            }
         }
 
         const int conn_rc = SSL_connect(raw_ssl);
@@ -374,9 +433,15 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
             got = SSL_read(ssl.get(), buf, sizeof(buf));
             if (got <= 0) {
                 int se = SSL_get_error(ssl.get(), got);
-                if (se == SSL_ERROR_ZERO_RETURN) break;
-                if (se == SSL_ERROR_WANT_READ || se == SSL_ERROR_WANT_WRITE) continue;
-                break;
+                if (se == SSL_ERROR_ZERO_RETURN) {
+                    break;
+                }
+                if (se == SSL_ERROR_WANT_READ || se == SSL_ERROR_WANT_WRITE) {
+                    continue;
+                }
+                r.err = ssl_error_message(ssl.get(), got, "ssl_read");
+                closesocket(s);
+                return r;
             }
         } else {
             got = tcp_recv_to(s, buf, sizeof(buf), timeout_ms);
