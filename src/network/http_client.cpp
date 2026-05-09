@@ -194,12 +194,11 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
         return r;
     }
 
-    size_t split_pos = std::string::npos;
     const size_t slash_pos = u.find('/');
     const size_t query_pos = u.find('?');
     const size_t frag_pos = u.find('#');
 
-    split_pos = slash_pos;
+    size_t split_pos = slash_pos;
     if (query_pos != std::string::npos && (split_pos == std::string::npos || query_pos < split_pos)) {
         split_pos = query_pos;
     }
