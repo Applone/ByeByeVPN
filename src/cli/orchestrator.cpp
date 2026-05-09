@@ -479,11 +479,9 @@ FullReport run_full_target(const std::string& target) {
         book.strong_signal("AmneziaWG handshake accepted on UDP/55555 (obfuscated WG profile)", 18);
     }
 
-    int hosting_hits = 0;
-
-    for (const auto& g : R.geos) {
-        if (g.is_hosting) ++hosting_hits;
-    }
+    const int hosting_hits = static_cast<int>(std::count_if(R.geos.begin(), R.geos.end(), [](const GeoInfo& g) {
+        return g.is_hosting;
+    }));
 
     if (hosting_hits > 0) {
         book.note("asn-hosting", "hosting/datacenter ASN is normal for public infrastructure");
