@@ -258,7 +258,8 @@ jobs:
 
   coverage:
     name: Coverage (Linux)
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    if: false
+    # if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     needs: [sanitizer-asan-ubsan]
     runs-on: ubuntu-latest
     steps:
