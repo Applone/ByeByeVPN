@@ -233,13 +233,13 @@ namespace JSON {
         if (v.is_obj) {
             auto it = v.o.find(key);
             if (it != v.o.end()) return it->second.s;
-            for (auto& pair : v.o) {
+            for (const auto& pair : v.o) {
                 std::string r = find_key(pair.second, key);
                 if (!r.empty()) return r;
             }
         }
         if (v.is_arr) {
-            for (auto& child : v.a) {
+            for (const auto& child : v.a) {
                 std::string r = find_key(child, key);
                 if (!r.empty()) return r;
             }

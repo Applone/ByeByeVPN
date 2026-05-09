@@ -67,8 +67,9 @@ GeoInfo geo_iplocate(const std::string& ip) {
     if (ap != std::string::npos) {
         size_t ob = r.body.find('{', ap);
         size_t ce = ob == std::string::npos ? std::string::npos : r.body.find('}', ob);
+        size_t comma = r.body.find(',', ap);
         if (ob != std::string::npos && ce != std::string::npos &&
-            ob < (r.body.find(',', ap) == std::string::npos ? ce + 1 : r.body.find(',', ap))) {
+            ob < (comma == std::string::npos ? ce + 1 : comma)) {
             asn_block = r.body.substr(ob, ce - ob + 1);
         }
     }

@@ -93,7 +93,7 @@ std::vector<J3Result> j3_probes(const std::string& host, int port) {
             for (size_t i = 11 + 32; i + 11 <= sizeof(hello); ++i) {
                 if (hello[i]   == '.' && hello[i+1] == 'i' && hello[i+2] == 'n' &&
                     hello[i+3] == 'v' && hello[i+4] == 'a' && hello[i+5] == 'l' &&
-                    hello[i+6] == 'i' && hello[i+7] == 'd' && i >= 3) {
+                    hello[i+6] == 'i' && hello[i+7] == 'd') {
                     unsigned char r[3]; memset(r, 0, 3);
                     if (RAND_bytes(r, 3) == 1) {
                         hello[i-3] = 'a' + (r[0] % 26);
@@ -121,8 +121,8 @@ static bool looks_like_http_line(const std::string& first_line, bool* bad_versio
     if (first_line.size() < 9) return false;
     if (first_line.compare(0, 5, "HTTP/") != 0) return false;
     char x = first_line[5];
-    char dot = first_line.size() > 6 ? first_line[6] : 0;
-    char y = first_line.size() > 7 ? first_line[7] : 0;
+    char dot = first_line[6];
+    char y = first_line[7];
     if (dot != '.') return false;
     bool good_version = ((x=='1' && (y=='0' || y=='1')) || (x=='2' && y=='0'));
     if (!good_version && bad_version_out) *bad_version_out = true;

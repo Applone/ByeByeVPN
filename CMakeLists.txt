@@ -93,7 +93,6 @@ set(BYEBYEVPN_CORE_SOURCES
     src/analysis/ct_check.cpp
     src/analysis/geoip.cpp
     src/analysis/sni_consistency.cpp
-    src/analysis/tspu.cpp
     src/analysis/verdict.cpp
     src/cli/orchestrator.cpp
     src/core/utils.cpp

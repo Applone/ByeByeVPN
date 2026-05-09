@@ -1,6 +1,5 @@
 #include "service_probes.h"
 #include "tcp_scanner.h"
-#include "../analysis/tspu.h"
 #include "../core/utils.h"
 
 #include <cctype>
@@ -39,25 +38,7 @@ FpResult fp_http_plain(const std::string& host, int port) {
     f.service = "HTTP";
     f.details = trim(first);
     if (!server.empty()) f.details += "  | Server: " + server;
-    
-    std::string loresp = tolower_s(resp);
-    size_t lp = loresp.find("\nlocation:");
-    if (lp != std::string::npos) {
-        size_t vs = lp + 10;
-        size_t ve = resp.find('\r', vs);
-        if (ve == std::string::npos) ve = resp.find('\n', vs);
-        if (ve != std::string::npos && ve > vs && ve - vs < 512) {
-            std::string location = trim(resp.substr(vs, ve - vs));
-            const char* marker = looks_like_tspu_redirect(location);
-            if (marker) {
-                f.tspu_redirect   = true;
-                f.redirect_target = location;
-                f.redirect_marker = marker;
-                f.details += std::string("  [!tspu-redirect to ") + marker + "]";
-            }
-        }
-    }
-    
+
     std::string rl = tolower_s(server);
     if (contains(rl, "caddy"))     f.details += "  %[caddy-fronted - common Xray/Reality fallback]";
     else if (contains(rl, "nginx")) f.details += "  %[nginx - fallback host?]";

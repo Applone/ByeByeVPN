@@ -253,20 +253,8 @@ FullReport run_full_target(const std::string& target) {
 
     R.open_tcp = scan_tcp(R.dns.primary_ip, ports, g_threads, g_tcp_to, &R.scan_stats);
 
-    if (!R.scan_stats.skipped && R.scan_stats.scanned >= 1000 && R.open_tcp.empty()) {
-        const auto tmo = R.scan_stats.timeouts;
-        const auto rst = R.scan_stats.refused;
-        if (rst == 0 && tmo >= R.scan_stats.scanned * 99 / 100) {
-            R.bgp_blackhole_likely = true;
-        }
-    }
-
     if (R.open_tcp.empty()) {
         tee_printf("  %sno open TCP ports found%s\n", col(C::YEL), col(C::RST));
-        if (R.bgp_blackhole_likely) {
-            tee_printf("  %s!! %zu/%zu ports timeout with 0 RST - probable L3 blackhole / routed filtering%s\n",
-                       col(C::RED), R.scan_stats.timeouts, R.scan_stats.scanned, col(C::RST));
-        }
     } else {
         for (const auto& o : R.open_tcp) {
             tee_printf("  %s:%-5d%s  %3lldms  %s%s%s",
@@ -491,31 +479,10 @@ FullReport run_full_target(const std::string& target) {
         book.strong_signal("AmneziaWG handshake accepted on UDP/55555 (obfuscated WG profile)", 18);
     }
 
-    int vpn_hits = 0;
-    int proxy_hits = 0;
-    int tor_hits = 0;
     int hosting_hits = 0;
 
     for (const auto& g : R.geos) {
-        if (g.is_vpn) ++vpn_hits;
-        if (g.is_proxy) ++proxy_hits;
-        if (g.is_tor) ++tor_hits;
         if (g.is_hosting) ++hosting_hits;
-    }
-
-    if (tor_hits > 0) {
-        book.strong_signal("threat-intel marks target as Tor exit", 20);
-    }
-    if (vpn_hits >= 2) {
-        book.soft_signal("multi-source GeoIP marks target as VPN", 6);
-    } else if (vpn_hits == 1) {
-        book.note("geo-vpn", "single-source VPN tag (high false-positive rate)");
-    }
-
-    if (proxy_hits >= 2) {
-        book.soft_signal("multi-source GeoIP marks target as proxy", 6);
-    } else if (proxy_hits == 1) {
-        book.note("geo-proxy", "single-source proxy tag (high false-positive rate)");
     }
 
     if (hosting_hits > 0) {
@@ -551,10 +518,6 @@ FullReport run_full_target(const std::string& target) {
             book.strong_signal("open SOCKS5 proxy exposed on :" + std::to_string(pf.port), 15);
         }
 
-        if (pf.fp.tspu_redirect) {
-            book.strong_signal("HTTP redirect to known censorship warning endpoint on :" + std::to_string(pf.port), 28);
-        }
-
         if (pf.tls && pf.tls->ok) {
             any_tls = true;
 
@@ -563,9 +526,6 @@ FullReport run_full_target(const std::string& target) {
             }
             if (pf.tls->self_signed) {
                 book.strong_signal("self-signed certificate on :" + std::to_string(pf.port), 8);
-            }
-            if (pf.tls->total_validity_days > 0 && pf.tls->total_validity_days < 14) {
-                book.strong_signal("certificate validity <14 days on :" + std::to_string(pf.port), 12);
             }
             if (pf.tls->age_days >= 0 && pf.tls->age_days < 14) {
                 book.note("cert-fresh", "fresh certificate on :" + std::to_string(pf.port) + " (rotation alone is not a reliable signal)");
@@ -631,12 +591,6 @@ FullReport run_full_target(const std::string& target) {
             }
         }
     }
-
-    if (R.bgp_blackhole_likely) {
-        book.strong_signal("network-level timeout wall (probable routed blackhole)", 35);
-    }
-
-
 
     book.clamp();
     R.score = book.score;
@@ -737,11 +691,7 @@ FullReport run_full_target(const std::string& target) {
     axis("CDN/LB environment", any_cdn_lb_detected ? "LOW" : "NONE",
          any_cdn_lb_detected ? "CDN/LB traits detected; SNI mismatch heuristics are down-weighted" : "no CDN/LB traits detected");
 
-    if (R.bgp_blackhole_likely) {
-        axis("Network-level filtering", "HIGH", "scan pattern indicates routed timeout wall");
-    } else {
-        axis("Network-level filtering", "LOW", "no broad timeout wall detected");
-    }
+    axis("Network-level filtering", "NONE", "timeout-wall heuristic removed from scoring");
 
     tee_printf("\n  %sHardening suggestions:%s\n", col(C::BOLD), col(C::RST));
     bool any_suggestion = false;
@@ -794,12 +744,10 @@ FullReport run_full_target(const std::string& target) {
             bool tier_a;
         };
 
-        const std::array<Rule, 8> rules{{
+        const std::array<Rule, 6> rules{{
             {"WireGuard signature", wg_default, "UDP/51820 handshake reply", true},
             {"AmneziaWG signature", awg_default, "UDP/55555 obfuscated handshake reply", true},
             {"Open proxy exposure", any_proxy_open, "SOCKS/HTTP CONNECT reachable", true},
-            {"HTTP warning redirect", std::any_of(R.fps.begin(), R.fps.end(), [](const auto& pf){ return pf.fp.tspu_redirect; }), "operator warning redirect observed", true},
-            {"BGP timeout wall", R.bgp_blackhole_likely, "high-rate timeout pattern", true},
             {"Reality cert-steering", any_reality, "SNI steering discriminator", false},
             {"Cert impersonation", any_impersonation, "brand cert/ASN mismatch", false},
             {"Active-probe anomalies", any_j3_canned || any_j3_badver, "canned/malformed HTTP fallback", false},

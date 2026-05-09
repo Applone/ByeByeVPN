@@ -784,6 +784,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
     size_t next_idx = 0;
 
     while (next_idx < ports.size() || !pending.empty()) {
+#ifdef _WIN32
         if (_kbhit()) {
             const int c = _getch();
             if (c == 'q' || c == 'Q' || c == 27) {
@@ -791,6 +792,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
                 break;
             }
         }
+#endif
 
         while (next_idx < ports.size() && static_cast<int>(pending.size()) < max_inflight) {
             const int port = ports[next_idx++];
@@ -963,12 +965,14 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
     bool watchdog_triggered = false;
 
     while (done < futures.size()) {
+#ifdef _WIN32
         if (_kbhit()) {
             const int c = _getch();
             if (c == 'q' || c == 'Q' || c == 27) {
                 stop_flag.store(true, std::memory_order_relaxed);
             }
         }
+#endif
 
         for (size_t i = 0; i < futures.size(); ++i) {
             if (taken[i]) continue;

@@ -31,7 +31,7 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
     struct timeval tv;
     tv.tv_sec = timeout_ms / 1000;
     tv.tv_usec = (timeout_ms % 1000) * 1000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
 #endif
 
     int rc = connect(s, chosen->ai_addr, (int)chosen->ai_addrlen);
@@ -42,7 +42,7 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
         r.err = "connect " + std::to_string(saved_err);
         return r;
     }
-    rc = send(s, (const char*)payload, plen, 0);
+    rc = send(s, reinterpret_cast<const char*>(payload), plen, 0);
     freeaddrinfo(ai);
     if (rc <= 0) { closesocket(s); r.err = "send"; return r; }
     char buf[2048];

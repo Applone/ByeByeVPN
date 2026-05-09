@@ -150,8 +150,11 @@ bool parse_top_level_array_size(const std::string& s, size_t& count) {
 CtCheck ct_check(const std::string& cert_sha256, bool allow_remote) {
     CtCheck r;
     if (cert_sha256.length() != 64) { r.err = "invalid sha256"; return r; }
-    for (char c : cert_sha256) {
-        if (!isxdigit((unsigned char)c)) { r.err = "invalid sha256"; return r; }
+    if (!std::all_of(cert_sha256.begin(), cert_sha256.end(), [](char c) {
+            return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+        })) {
+        r.err = "invalid sha256";
+        return r;
     }
     if (!allow_remote) { r.err = "remote query disabled"; return r; }
     r.queried = true;

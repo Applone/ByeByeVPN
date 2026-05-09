@@ -8,6 +8,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509_vfy.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cerrno>
@@ -26,9 +27,9 @@ namespace {
 
 bool parse_http_port(const std::string& text, int& port) {
     if (text.empty()) return false;
-    for (char c : text) {
-        if (!std::isdigit((unsigned char)c)) return false;
-    }
+    if (!std::all_of(text.begin(), text.end(), [](char c) {
+            return std::isdigit(static_cast<unsigned char>(c)) != 0;
+        })) return false;
 
     char* end = nullptr;
     errno = 0;
@@ -194,7 +195,7 @@ HttpResp http_get(const std::string& url, int timeout_ms, bool allow_insecure_tl
         return r;
     }
 
-    if (!host.empty() && host[0] == '[') {
+    if (host[0] == '[') {
         size_t close = host.find(']');
         if (close == std::string::npos) {
             r.err = "bad host";
@@ -225,7 +226,7 @@ HttpResp http_get(const std::string& url, int timeout_ms, bool allow_insecure_tl
                     r.err = "bad port";
                     return r;
                 }
-                host = host.substr(0, last_col);
+                host.erase(last_col);
             }
         }
     }

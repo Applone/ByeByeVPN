@@ -16,7 +16,7 @@
 static std::string sa_ip(const sockaddr* sa) {
     char buf[INET6_ADDRSTRLEN] = {0};
     if (sa->sa_family == AF_INET) {
-        auto* s4 = (sockaddr_in*)sa;
+        auto* s4 = reinterpret_cast<const sockaddr_in*>(sa);
         inet_ntop(AF_INET, &s4->sin_addr, buf, sizeof(buf));
     } else {
         auto* s6 = reinterpret_cast<const sockaddr_in6*>(sa);

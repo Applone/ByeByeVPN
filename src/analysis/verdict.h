@@ -53,7 +53,6 @@ struct FullReport {
 
     std::vector<PortFp> fps;
     ScanStats scan_stats;
-    bool bgp_blackhole_likely = false;
     int score = 0;
     std::string label;
     std::vector<Advice> advices;

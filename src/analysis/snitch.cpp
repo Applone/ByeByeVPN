@@ -38,58 +38,61 @@ static void measure_rtt_series(const std::string& host, int port, int to_ms, int
 }
 
 static double country_min_rtt_ms(const std::string& cc) {
-    static const struct { const char* cc; double min_ms; double max_ms; } TBL[] = {
-        {"RU",     4,    40},
-        {"BY",    10,    40},
-        {"UA",    10,    50},
-        {"KZ",    20,    80},
-        {"LT",    15,    45},
-        {"LV",    15,    45},
-        {"EE",    15,    45},
-        {"FI",    10,    45},
-        {"SE",    20,    55},
-        {"NO",    25,    60},
-        {"DE",    25,    60},
-        {"NL",    30,    65},
-        {"FR",    30,    70},
-        {"GB",    35,    75},
-        {"IT",    35,    80},
-        {"ES",    45,    90},
-        {"PL",    25,    60},
-        {"CZ",    25,    60},
-        {"AT",    30,    65},
-        {"CH",    30,    70},
-        {"BE",    30,    65},
-        {"HU",    30,    65},
-        {"RO",    30,    70},
-        {"BG",    30,    70},
-        {"TR",    45,   100},
-        {"IL",    60,   120},
-        {"IR",    70,   150},
-        {"AE",    80,   150},
-        {"SA",    80,   160},
-        {"IN",   110,   220},
-        {"CN",   130,   290},
-        {"HK",   140,   280},
-        {"JP",   150,   300},
-        {"KR",   150,   300},
-        {"SG",   160,   320},
-        {"TH",   160,   320},
-        {"ID",   180,   350},
-        {"AU",   230,   420},
-        {"NZ",   260,   460},
-        {"US",   100,   200},
-        {"CA",   100,   200},
-        {"MX",   130,   260},
-        {"BR",   180,   340},
-        {"AR",   210,   380},
-        {"ZA",   160,   320},
-        {"EG",   60,    130},
+    static const struct { const char* cc; double min_ms; } TBL[] = {
+        {"RU",     4},
+        {"BY",    10},
+        {"UA",    10},
+        {"KZ",    20},
+        {"LT",    15},
+        {"LV",    15},
+        {"EE",    15},
+        {"FI",    10},
+        {"SE",    20},
+        {"NO",    25},
+        {"DE",    25},
+        {"NL",    30},
+        {"FR",    30},
+        {"GB",    35},
+        {"IT",    35},
+        {"ES",    45},
+        {"PL",    25},
+        {"CZ",    25},
+        {"AT",    30},
+        {"CH",    30},
+        {"BE",    30},
+        {"HU",    30},
+        {"RO",    30},
+        {"BG",    30},
+        {"TR",    45},
+        {"IL",    60},
+        {"IR",    70},
+        {"AE",    80},
+        {"SA",    80},
+        {"IN",   110},
+        {"CN",   130},
+        {"HK",   140},
+        {"JP",   150},
+        {"KR",   150},
+        {"SG",   160},
+        {"TH",   160},
+        {"ID",   180},
+        {"AU",   230},
+        {"NZ",   260},
+        {"US",   100},
+        {"CA",   100},
+        {"MX",   130},
+        {"BR",   180},
+        {"AR",   210},
+        {"ZA",   160},
+        {"EG",    60},
     };
     if (cc.empty()) return 0.0;
     std::string u = cc;
     std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c){ return std::toupper(c); });
-    for (auto& e: TBL) if (u == e.cc) return e.min_ms;
+    const auto* it = std::find_if(std::begin(TBL), std::end(TBL), [&](const auto& e) {
+        return u == e.cc;
+    });
+    if (it != std::end(TBL)) return it->min_ms;
     return 0.0;
 }
 
@@ -106,7 +109,10 @@ static double country_max_rtt_ms(const std::string& cc) {
     if (cc.empty()) return 0.0;
     std::string u = cc;
     std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c){ return std::toupper(c); });
-    for (auto& e: TBL) if (u == e.cc) return e.max_ms;
+    const auto* it = std::find_if(std::begin(TBL), std::end(TBL), [&](const auto& e) {
+        return u == e.cc;
+    });
+    if (it != std::end(TBL)) return it->max_ms;
     return 0.0;
 }
 

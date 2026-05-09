@@ -59,34 +59,34 @@ std::vector<int> build_tcp_ports() {
 struct PortHint {
     int port;
     const char* svc;
-    const char* proto;
 };
 
 static const std::vector<PortHint> PORT_HINTS = {
-    {22, "SSH", "tcp"},
-    {80, "HTTP", "tcp"},
-    {443, "HTTPS / VLESS / Reality", "tcp"},
-    {1080, "SOCKS5", "tcp"},
-    {3128, "HTTP proxy", "tcp"},
-    {4433, "XTLS / Reality", "tcp"},
-    {4443, "XTLS / Reality", "tcp"},
-    {8080, "HTTP proxy", "tcp"},
-    {8443, "HTTPS alt / Reality", "tcp"},
-    {8888, "HTTP alt", "tcp"},
-    {9050, "Tor SOCKS", "tcp"},
-    {9051, "Tor control", "tcp"},
-    {10808, "v2ray/xray SOCKS", "tcp"},
-    {10809, "v2ray/xray HTTP", "tcp"},
-    {10810, "v2ray/xray alt", "tcp"},
-    {41641, "WireGuard alt", "udp"},
-    {51820, "WireGuard", "udp"},
-    {55555, "AmneziaWG", "udp"},
+    {22, "SSH"},
+    {80, "HTTP"},
+    {443, "HTTPS / VLESS / Reality"},
+    {1080, "SOCKS5"},
+    {3128, "HTTP proxy"},
+    {4433, "XTLS / Reality"},
+    {4443, "XTLS / Reality"},
+    {8080, "HTTP proxy"},
+    {8443, "HTTPS alt / Reality"},
+    {8888, "HTTP alt"},
+    {9050, "Tor SOCKS"},
+    {9051, "Tor control"},
+    {10808, "v2ray/xray SOCKS"},
+    {10809, "v2ray/xray HTTP"},
+    {10810, "v2ray/xray alt"},
+    {41641, "WireGuard alt"},
+    {51820, "WireGuard"},
+    {55555, "AmneziaWG"},
 };
 
 const char* port_hint(int p) {
-    for (const auto& h : PORT_HINTS) {
-        if (h.port == p) return h.svc;
-    }
+    const auto it = std::find_if(PORT_HINTS.begin(), PORT_HINTS.end(), [p](const PortHint& h) {
+        return h.port == p;
+    });
+    if (it != PORT_HINTS.end()) return it->svc;
     if (p == 6443 || p == 8443 || p == 4443) return "HTTPS alt / possible VPN over TLS";
     if (p >= 10800 && p <= 10820) return "v2ray/xray local-like range";
     return "";

@@ -142,13 +142,13 @@ bool asn_owns_brand(const std::string& brand_domain, const std::vector<std::stri
     std::string ms = markers;
     std::transform(ms.begin(), ms.end(), ms.begin(), [](unsigned char c){ return std::tolower(c); });
     std::vector<std::string> parts = split(ms, ',');
-    for (auto& org: asn_orgs) {
+    for (const auto& org : asn_orgs) {
         std::string lo = org;
         std::transform(lo.begin(), lo.end(), lo.begin(), [](unsigned char c){ return std::tolower(c); });
-        for (auto& m: parts) {
-            std::string mm = trim(m);
-            if (!mm.empty() && lo.find(mm) != std::string::npos) return true;
-        }
+        if (std::any_of(parts.begin(), parts.end(), [&](const std::string& m) {
+                std::string mm = trim(m);
+                return !mm.empty() && lo.find(mm) != std::string::npos;
+            })) return true;
     }
     return false;
 }

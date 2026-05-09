@@ -9,9 +9,6 @@ struct FpResult {
     std::string raw_hex;
     bool   is_vpn_like = false;
     bool   silent      = false;
-    bool   tspu_redirect = false;
-    std::string redirect_target;
-    std::string redirect_marker;
 };
 
 std::string printable_prefix(const std::string& s, size_t lim = 80);

@@ -7,12 +7,12 @@
 | |_) | |_| |  __/ |_) | |_| |  __/\ V / |  __/| |\  |
 |____/ \__, |\___|____/ \__, |\___| \_/  |_|   |_| \_|
        |___/            |___/                          
-   Remote signature-less VPN profiler   v3.0.0
+   Remote signature-less VPN profiler   v1.1.0
 ```
 
 **Discussion / report issues:**
 [ntc.party/t/byebyevpn/24325](https://ntc.party/t/byebyevpn/24325) ·
-[GitHub Issues](https://github.com/pwnnex/ByeByeVPN/issues)
+[GitHub Issues](https://github.com/Applone/ByeByeVPN/issues)
 
 ## Purpose
 
@@ -33,7 +33,7 @@ Given an IP or hostname, run a remote detectability methodology focused on moder
 ### Linux (CMake + Ninja)
 ```bash
 sudo apt install build-essential cmake ninja-build libssl-dev
-git clone https://github.com/pwnnex/ByeByeVPN.git && cd ByeByeVPN
+git clone https://github.com/Applone/ByeByeVPN.git && cd ByeByeVPN
 mkdir build && cd build
 cmake -G Ninja ..
 ninja
@@ -44,7 +44,7 @@ ninja
 ### Windows (CMake + MSVC)
 Open Developer Command Prompt for Visual Studio:
 ```cmd
-git clone https://github.com/pwnnex/ByeByeVPN.git
+git clone https://github.com/Applone/ByeByeVPN.git
 cd ByeByeVPN
 mkdir build
 cd build

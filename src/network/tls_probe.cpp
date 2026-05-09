@@ -6,6 +6,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+#include <algorithm>
 #include <chrono>
 
 static int asn1_time_diff_days_now(const ASN1_TIME* t, bool from_t_to_now) {
@@ -61,10 +62,12 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
     if (!sni.empty()) SSL_set_tlsext_host_name(ssl.get(), sni.c_str());
     
     std::vector<unsigned char> wire;
-    for (auto& p: split(alpn, ',')) {
+    for (const auto& p : split(alpn, ',')) {
         std::string v = trim(p); if (v.empty()) continue;
         wire.push_back((unsigned char)v.size());
-        for (char c: v) wire.push_back((unsigned char)c);
+        std::transform(v.begin(), v.end(), std::back_inserter(wire), [](char c) {
+            return static_cast<unsigned char>(c);
+        });
     }
     if (!wire.empty()) SSL_set_alpn_protos(ssl.get(), wire.data(), (unsigned)wire.size());
     
@@ -108,7 +111,7 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
     r.cipher  = SSL_get_cipher_name(ssl.get());
     const unsigned char* ap=nullptr; unsigned apl=0;
     SSL_get0_alpn_selected(ssl.get(), &ap, &apl);
-    if (apl) r.alpn.assign((const char*)ap, apl);
+    if (apl) r.alpn.assign(reinterpret_cast<const char*>(ap), apl);
     int nid = SSL_get_negotiated_group(ssl.get());
     const char* gn = OBJ_nid2sn(nid);
     if (gn) r.group = gn;
@@ -144,7 +147,7 @@ TlsProbe tls_probe(const std::string& ip, int port, const std::string& sni,
             int d = 0, secs = 0; ASN1_TIME_diff(&d, &secs, nb, na); r.total_validity_days = d;
         }
         std::unique_ptr<GENERAL_NAMES, decltype(&GENERAL_NAMES_free)> gens(
-            (GENERAL_NAMES*)X509_get_ext_d2i(cert.get(), NID_subject_alt_name, nullptr, nullptr),
+            reinterpret_cast<GENERAL_NAMES*>(X509_get_ext_d2i(cert.get(), NID_subject_alt_name, nullptr, nullptr)),
             GENERAL_NAMES_free
         );
         if (gens) {

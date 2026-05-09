@@ -21,8 +21,9 @@ static bool cert_covers_name(const std::string& sni,
                              const std::string& subject_cn,
                              const std::vector<std::string>& san) {
     if (dns_name_match(sni, subject_cn)) return true;
-    for (auto& s: san) if (dns_name_match(sni, s)) return true;
-    return false;
+    return std::any_of(san.begin(), san.end(), [&](const std::string& s) {
+        return dns_name_match(sni, s);
+    });
 }
 
 SniConsistency sni_consistency(const std::string& ip, int port, const std::string& base_sni) {
@@ -47,7 +48,7 @@ SniConsistency sni_consistency(const std::string& ip, int port, const std::strin
     int same = 0, total = 0;
     std::set<std::string> distinct;
     if (!base.cert_sha256.empty()) distinct.insert(base.cert_sha256);
-    for (auto& s: alt) {
+    for (const auto& s : alt) {
         TlsProbe p = tls_probe(ip, port, s);
         SniConsistency::Entry e;
         e.sni = s;
@@ -68,7 +69,7 @@ SniConsistency sni_consistency(const std::string& ip, int port, const std::strin
         c.same_cert_always = true;
         bool cert_covers_base = cert_covers_name(base_sni, base.subject_cn, base.san);
         if (!cert_covers_base) {
-            for (auto& s: alt) {
+            for (const auto& s : alt) {
                 if (_stricmp(s.c_str(), base_sni.c_str()) == 0) continue;
                 if (cert_covers_name(s, base.subject_cn, base.san)) {
                     c.reality_like = true;

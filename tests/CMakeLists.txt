@@ -1,6 +1,5 @@
 set(BYEBYEVPN_TEST_SOURCES
     test_utils.cpp
-    test_tspu.cpp
     test_port_scan.cpp
     test_ct_check.cpp
 )
