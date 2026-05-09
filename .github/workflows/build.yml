@@ -286,9 +286,9 @@ jobs:
 
       - name: Capture coverage
         run: |
-          lcov --directory build-cov --capture --output-file coverage.info --rc lcov_branch_coverage=1
-          lcov --remove coverage.info '/usr/*' '*/_deps/*' '*/tests/*' --output-file coverage.info
-          genhtml coverage.info --output-directory coverage-html --branch-coverage
+          lcov --directory build-cov --capture --output-file coverage.info --rc lcov_branch_coverage=1 --no-external --ignore-errors empty,mismatch,gcov
+          lcov --remove coverage.info '*/_deps/*' '*/tests/*' --output-file coverage.info --ignore-errors empty
+          genhtml coverage.info --output-directory coverage-html --branch-coverage --ignore-errors empty
 
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
