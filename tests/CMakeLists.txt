@@ -2,6 +2,13 @@ set(BYEBYEVPN_TEST_SOURCES
     test_utils.cpp
     test_port_scan.cpp
     test_ct_check.cpp
+    test_dns.cpp
+    test_tcp_scanner.cpp
+    test_udp_scanner.cpp
+    test_http_client.cpp
+    test_service_probes.cpp
+    test_vpn_probes.cpp
+    test_openssl_runtime.cpp
 )
 
 add_executable(byebyevpn_tests ${BYEBYEVPN_TEST_SOURCES})

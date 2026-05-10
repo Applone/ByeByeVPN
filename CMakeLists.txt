@@ -145,6 +145,7 @@ if(BYEBYEVPN_ENABLE_TESTS AND BUILD_TESTING)
     FetchContent_Declare(
         catch2
         URL https://github.com/catchorg/Catch2/archive/refs/tags/v3.8.1.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(catch2)
 
