@@ -4,6 +4,7 @@ set(BYEBYEVPN_TEST_SOURCES
     test_ct_check.cpp
     test_dns.cpp
     test_tcp_scanner.cpp
+    test_tcp_async_scan.cpp
     test_udp_scanner.cpp
     test_http_client.cpp
     test_service_probes.cpp
