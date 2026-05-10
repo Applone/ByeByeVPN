@@ -42,6 +42,69 @@ jobs:
         run: |
           clang-tidy -p build -warnings-as-errors='*' $(find src -name '*.cpp' -print)
 
+  debug-build-artifacts:
+    name: Debug Build Artifacts (${{ matrix.os }})
+    needs: [static-analysis]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            generator: Ninja
+          - os: windows-latest
+            generator: "Visual Studio 17 2022"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm
+
+      - name: Configure CMake (Linux Debug)
+        if: runner.os == 'Linux'
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -S . -B build -G "${{ matrix.generator }}" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBYEBYEVPN_ENABLE_TESTS=OFF \
+            -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (Linux Debug)
+        if: runner.os == 'Linux'
+        run: cmake --build build --parallel
+
+      - name: Prepare artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p staging
+          cp build/byebyevpn staging/
+
+      - name: Configure CMake (Windows Debug)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -G "${{ matrix.generator }}" -DBYEBYEVPN_ENABLE_TESTS=OFF -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (Windows Debug)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Debug --parallel
+
+      - name: Prepare artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          if not exist staging mkdir staging
+          copy build\Debug\byebyevpn.exe staging\
+
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: byebyevpn-debug-${{ matrix.os }}
+          path: staging/*
+          retention-days: 7
+
   coverage:
     name: Coverage (Linux)
     needs: [static-analysis]
