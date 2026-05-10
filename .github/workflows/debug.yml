@@ -149,6 +149,7 @@ jobs:
           CXX: clang++
         run: |
           LIBCXX_ROOT="/opt/libcxx_asan_ubsan"
+          SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           cmake -S . -B build-asan-ubsan -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
@@ -156,8 +157,8 @@ jobs:
             -DBYEBYEVPN_ENABLE_UBSAN=ON \
             -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/deps/openssl-asan-ubsan" \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
+            -DCMAKE_CXX_FLAGS="${SAN_FLAGS} -stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
+            -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS} -stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
 
       - name: Build (ASan+UBSan)
         run: cmake --build build-asan-ubsan --parallel
@@ -218,14 +219,15 @@ jobs:
           CXX: clang++
         run: |
           LIBCXX_ROOT="/opt/libcxx_tsan"
+          SAN_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
           cmake -S . -B build-tsan -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_ENABLE_TSAN=ON \
             -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/deps/openssl-tsan" \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
+            -DCMAKE_CXX_FLAGS="${SAN_FLAGS} -stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
+            -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS} -stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
 
       - name: Build (TSan)
         run: cmake --build build-tsan --parallel
@@ -286,14 +288,15 @@ jobs:
           CXX: clang++
         run: |
           LIBCXX_ROOT="/opt/libcxx_msan"
+          SAN_FLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
           cmake -S . -B build-msan -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_ENABLE_MSAN=ON \
             -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/deps/openssl-msan" \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
+            -DCMAKE_CXX_FLAGS="${SAN_FLAGS} -stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
+            -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS} -stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
 
       - name: Build (MSan)
         run: cmake --build build-msan --parallel
