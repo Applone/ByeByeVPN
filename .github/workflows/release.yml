@@ -1,0 +1,103 @@
+name: Release CI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release-build:
+    name: Release Build & Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            generator: Ninja
+          - os: windows-latest
+            generator: "Visual Studio 17 2022"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libssl-dev gcc g++
+
+      - name: Configure CMake (Linux Release)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build -G "${{ matrix.generator }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBYEBYEVPN_ENABLE_TESTS=ON \
+            -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (Linux Release)
+        if: runner.os == 'Linux'
+        run: cmake --build build --parallel
+
+      - name: Run unit tests (Linux Release)
+        if: runner.os == 'Linux'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Configure CMake (Windows Release)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -G "${{ matrix.generator }}" -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (Windows Release)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      - name: Run unit tests (Windows Release)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Prepare artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p staging
+          cp build/byebyevpn staging/
+
+      - name: Prepare artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          if not exist staging mkdir staging
+          copy build\Release\byebyevpn.exe staging\
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: byebyevpn-${{ matrix.os }}
+          path: staging/*
+          retention-days: 7
+
+  release:
+    name: Publish Release
+    needs: [release-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: byebyevpn-ubuntu-latest
+          path: out/linux
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: byebyevpn-windows-latest
+          path: out/windows
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            out/linux/byebyevpn
+            out/windows/byebyevpn.exe
