@@ -21,9 +21,12 @@ jobs:
       - name: Install analysis dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev gcc g++ cppcheck clang-tidy
+          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm cppcheck clang-tidy
 
       - name: Configure compile database
+        env:
+          CC: clang
+          CXX: clang++
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
@@ -49,28 +52,42 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev gcc g++ lcov
+          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm
 
       - name: Configure CMake (coverage)
+        env:
+          CC: clang
+          CXX: clang++
         run: |
           cmake -S . -B build-cov -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
-            -DCMAKE_CXX_FLAGS="--coverage" \
-            -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+            -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
 
       - name: Build (coverage)
         run: cmake --build build-cov --parallel
 
       - name: Run unit tests (coverage)
-        run: ctest --test-dir build-cov --output-on-failure
+        run: |
+          mkdir -p build-cov/profiles
+          export LLVM_PROFILE_FILE="$GITHUB_WORKSPACE/build-cov/profiles/byebyevpn_tests-%p.profraw"
+          ctest --test-dir build-cov --output-on-failure
 
       - name: Capture coverage
         run: |
-          lcov --directory build-cov --capture --output-file coverage.info --rc lcov_branch_coverage=1 --no-external --ignore-errors empty,mismatch,gcov,source
-          lcov --remove coverage.info '*/_deps/*' '*/tests/*' '*/build-cov/*' --output-file coverage.info --ignore-errors empty,unused
-          genhtml coverage.info --output-directory coverage-html --branch-coverage --ignore-errors empty,source
+          llvm-profdata merge -sparse build-cov/profiles/*.profraw -o build-cov/coverage.profdata
+          llvm-cov export -format=lcov \
+            -instr-profile=build-cov/coverage.profdata \
+            -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
+            build-cov/tests/byebyevpn_tests > coverage.info
+          llvm-cov show \
+            -format=html \
+            -output-dir=coverage-html \
+            -instr-profile=build-cov/coverage.profdata \
+            -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
+            build-cov/tests/byebyevpn_tests
 
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1

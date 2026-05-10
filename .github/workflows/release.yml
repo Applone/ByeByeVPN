@@ -26,10 +26,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev gcc g++
+          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm
 
       - name: Configure CMake (Linux Release)
         if: runner.os == 'Linux'
+        env:
+          CC: clang
+          CXX: clang++
         run: |
           cmake -S . -B build -G "${{ matrix.generator }}" \
             -DCMAKE_BUILD_TYPE=Release \
