@@ -110,7 +110,7 @@ FpResult fp_http_connect(const std::string& host, int port) {
                             "\r\n";
     tcp_send_all(s, req.data(), (int)req.size());
 
-    char buf[512];
+    char buf[512] = {0};
     int n = tcp_recv_to(s, buf, sizeof(buf) - 1, 1500);
     closesocket(s);
     if (n <= 0) {

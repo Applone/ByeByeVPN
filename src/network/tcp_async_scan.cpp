@@ -869,7 +869,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
 
         if ((pfd.revents & POLLIN) != 0) {
             for (;;) {
-                uint8_t buf[2048];
+                uint8_t buf[2048] = {0};
                 sockaddr_in from{};
                 socklen_t from_len = sizeof(from);
                 const int n = recvfrom(recv_fd,

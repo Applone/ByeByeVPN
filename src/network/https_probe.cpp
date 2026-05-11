@@ -91,7 +91,7 @@ HttpsProbe https_probe(const std::string& ip, int port, const std::string& host_
         return r;
     }
     std::string body;
-    char buf[1024];
+    char buf[1024] = {0};
     for (int i=0; i<6; ++i) {
         int n = SSL_read(ssl.get(), buf, sizeof(buf));
         if (n <= 0) {

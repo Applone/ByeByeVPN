@@ -425,7 +425,7 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
     }
 
     std::string resp_data;
-    char buf[4096];
+    char buf[4096] = {0};
     while (true) {
         int got = 0;
         if (is_https) {
@@ -462,11 +462,12 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
         if (space1 != std::string::npos) {
             const size_t space2 = headers.find(' ', space1 + 1);
             if (space2 != std::string::npos) {
-                try {
-                    r.status = std::stoi(headers.substr(space1 + 1, space2 - space1 - 1));
-                } catch (const std::invalid_argument&) {
-                    r.status = 0;
-                } catch (const std::out_of_range&) {
+                std::string status_str = headers.substr(space1 + 1, space2 - space1 - 1);
+                char* end = nullptr;
+                long val = std::strtol(status_str.c_str(), &end, 10);
+                if (end != status_str.c_str()) {
+                    r.status = static_cast<int>(val);
+                } else {
                     r.status = 0;
                 }
             }
@@ -480,12 +481,9 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
                 size_t nl = r.body.find("\r\n", pos);
                 if (nl == std::string::npos) break;
                 std::string hex_len = r.body.substr(pos, nl - pos);
-                int len = 0;
-                try {
-                    len = std::stoi(hex_len, nullptr, 16);
-                } catch (...) {
-                    break;
-                }
+                char* end = nullptr;
+                long len = std::strtol(hex_len.c_str(), &end, 16);
+                if (end == hex_len.c_str() || len < 0) break;
                 if (len == 0) break;
                 pos = nl + 2;
                 if (pos + len > r.body.size()) break;

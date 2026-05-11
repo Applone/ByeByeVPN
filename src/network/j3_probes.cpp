@@ -37,7 +37,7 @@ std::vector<J3Result> j3_probes(const std::string& host, int port) {
         std::string err; SOCKET s = tcp_connect(host, port, g_tcp_to, err);
         J3Result r; r.name = "empty/close";
         if (s != INVALID_SOCKET) {
-            char buf[128]; int n = tcp_recv_to(s, buf, sizeof(buf)-1, 800);
+            char buf[128] = {0}; int n = tcp_recv_to(s, buf, sizeof(buf)-1, 800);
             if (n > 0) { 
                 r.responded = true; r.bytes = n; 
                 std::string b(buf,n);

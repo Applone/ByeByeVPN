@@ -45,7 +45,7 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
     rc = send(s, reinterpret_cast<const char*>(payload), plen, 0);
     freeaddrinfo(ai);
     if (rc <= 0) { closesocket(s); r.err = "send"; return r; }
-    char buf[2048];
+    char buf[2048] = {0};
     int got = recv(s, buf, sizeof(buf), 0);
     int saved_err = (got <= 0) ? WSAGetLastError() : 0;
     closesocket(s);
