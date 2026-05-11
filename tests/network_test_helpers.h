@@ -3,6 +3,7 @@
 
 #include "network/socket_sys.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <functional>
@@ -216,6 +217,92 @@ private:
     int port_ = 0;
     Handler handler_;
     std::thread thread_;
+};
+
+class TcpMultiShotServer {
+public:
+    using Handler = std::function<void(SOCKET, int)>;
+
+    TcpMultiShotServer(int max_clients,
+                       Handler handler,
+                       std::chrono::milliseconds accept_window = std::chrono::milliseconds(2500))
+        : max_clients_(max_clients), handler_(std::move(handler)), accept_window_(accept_window) {
+        if (max_clients_ <= 0) {
+            throw std::invalid_argument("max_clients must be positive");
+        }
+
+        listen_sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listen_sock_ == INVALID_SOCKET) throw std::runtime_error("socket");
+
+        int opt = 1;
+        setsockopt(listen_sock_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+
+        if (bind(listen_sock_, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) != 0) {
+            closesocket(listen_sock_);
+            throw std::runtime_error("bind");
+        }
+        if (listen(listen_sock_, max_clients_) != 0) {
+            closesocket(listen_sock_);
+            throw std::runtime_error("listen");
+        }
+
+        sockaddr_in bound{};
+        socklen_t len = sizeof(bound);
+        if (getsockname(listen_sock_, reinterpret_cast<sockaddr*>(&bound), &len) != 0) {
+            closesocket(listen_sock_);
+            throw std::runtime_error("getsockname");
+        }
+        port_ = ntohs(bound.sin_port);
+
+        set_nonblocking(listen_sock_, true);
+
+        thread_ = std::thread([this] {
+            const auto deadline = std::chrono::steady_clock::now() + accept_window_;
+            int handled = 0;
+            while (handled < max_clients_ && std::chrono::steady_clock::now() < deadline) {
+                sockaddr_in peer{};
+                socklen_t plen = sizeof(peer);
+                SOCKET client = accept(listen_sock_, reinterpret_cast<sockaddr*>(&peer), &plen);
+                if (client != INVALID_SOCKET) {
+                    handler_(client, handled);
+                    closesocket(client);
+                    ++handled;
+                    handled_clients_.store(handled, std::memory_order_relaxed);
+                    continue;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    TcpMultiShotServer(const TcpMultiShotServer&) = delete;
+    TcpMultiShotServer& operator=(const TcpMultiShotServer&) = delete;
+
+    ~TcpMultiShotServer() {
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+        if (listen_sock_ != INVALID_SOCKET) {
+            closesocket(listen_sock_);
+        }
+    }
+
+    int port() const { return port_; }
+    int handled_clients() const { return handled_clients_.load(std::memory_order_relaxed); }
+
+private:
+    SOCKET listen_sock_ = INVALID_SOCKET;
+    int max_clients_ = 0;
+    int port_ = 0;
+    Handler handler_;
+    std::chrono::milliseconds accept_window_{};
+    std::thread thread_;
+    std::atomic<int> handled_clients_{0};
 };
 
 } // namespace testnet

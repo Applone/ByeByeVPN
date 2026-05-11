@@ -58,3 +58,4 @@ out/
 byebyevpn-*.md
 !README.md
 **/package-lock.json
+*.diff

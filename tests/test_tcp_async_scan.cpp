@@ -5,7 +5,12 @@
 #include "network_test_helpers.h"
 
 #include <algorithm>
+#include <iterator>
 #include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -130,3 +135,69 @@ TEST_CASE("scan_tcp_async with single port") {
     REQUIRE(result[0].connect_ms >= 0);
     REQUIRE(stats.scanned == 1);
 }
+
+TEST_CASE("scan_tcp_async handles duplicate open ports and keeps sorted output") {
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = false;
+
+    testnet::TcpMultiShotServer server(
+        2,
+        [](SOCKET client, int) {
+            const char kMsg[] = "ok";
+            send(client, kMsg, 2, 0);
+        });
+
+    const int closed = testnet::reserve_unused_tcp_port();
+    const std::vector<int> ports = {server.port(), closed, server.port()};
+
+    ScanStats stats{};
+    const auto result = scan_tcp_async("127.0.0.1", ports, 1, 180, &stats);
+
+    REQUIRE(stats.scanned == ports.size());
+    REQUIRE(std::is_sorted(result.begin(), result.end(), [](const TcpOpen& a, const TcpOpen& b) {
+        return a.port < b.port;
+    }));
+
+    const auto open_hits = std::count_if(result.begin(), result.end(), [&](const TcpOpen& o) {
+        return o.port == server.port();
+    });
+    REQUIRE(open_hits >= 1);
+}
+
+TEST_CASE("scan_tcp_async non-empty scan works with null stats") {
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = false;
+
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        const char kMsg[] = "banner";
+        send(client, kMsg, 6, 0);
+    });
+
+    const auto result = scan_tcp_async("127.0.0.1", {server.port()}, 8, 300, nullptr);
+    REQUIRE(result.size() == 1);
+    REQUIRE(result.front().port == server.port());
+}
+
+#ifndef _WIN32
+TEST_CASE("scan_tcp_async --syn falls back to connect scan when not root") {
+    if (geteuid() == 0) {
+        SKIP("Fallback path is specific to non-root execution");
+    }
+
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = true;
+
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        const char kMsg[] = "hi";
+        send(client, kMsg, 2, 0);
+    });
+
+    ScanStats stats{};
+    const auto result = scan_tcp_async("127.0.0.1", {server.port()}, 64, 300, &stats);
+
+    REQUIRE(result.size() == 1);
+    REQUIRE(result.front().port == server.port());
+    REQUIRE(stats.scanned == 1);
+    REQUIRE_FALSE(stats.skipped);
+}
+#endif

@@ -1,7 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/utils.h"
 #include "network/j3_probes.h"
+#include "network_test_helpers.h"
 
+#include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -22,6 +26,12 @@ J3Result make_resp(const char* name, const std::string& first_line, int bytes) {
     r.first_line = first_line;
     return r;
 }
+
+struct TcpTimeoutGuard {
+    int saved = g_tcp_to;
+    explicit TcpTimeoutGuard(int value) { g_tcp_to = value; }
+    ~TcpTimeoutGuard() { g_tcp_to = saved; }
+};
 
 } // namespace
 
@@ -162,4 +172,91 @@ TEST_CASE("j3_analyze missing dot in version") {
     const auto a = j3_analyze({make_resp("HTTP GET /", "HTTP/X11 200 OK", 100)});
     REQUIRE(a.http_real == 0);
     REQUIRE(a.raw_non_http == 1);
+}
+
+TEST_CASE("j3_analyze skips non-http duplicate group and picks later valid canned signature") {
+    const std::vector<J3Result> probes = {
+        make_resp("SSH banner", "SAME-LINE", 12),
+        make_resp("0xFF x128", "SAME-LINE", 12),
+        make_resp("HTTP GET /", "HTTP/1.1 403 Forbidden", 19),
+        make_resp("HTTP abs-URI (proxy-style)", "HTTP/1.1 403 Forbidden", 19),
+    };
+
+    const auto a = j3_analyze(probes);
+    REQUIRE(a.canned_identical == 2);
+    REQUIRE(a.canned_line == "HTTP/1.1 403 Forbidden");
+    REQUIRE(a.canned_bytes == 19);
+}
+
+TEST_CASE("j3_analyze requires canned line longer than three chars") {
+    const auto a = j3_analyze({
+        make_resp("HTTP GET /", "abc", 3),
+        make_resp("HTTP abs-URI (proxy-style)", "abc", 3),
+    });
+
+    REQUIRE(a.canned_identical == 0);
+    REQUIRE(a.canned_line.empty());
+    REQUIRE(a.canned_bytes == 0);
+}
+
+TEST_CASE("j3_probes loopback service returns named probe set") {
+    TcpTimeoutGuard timeout_guard(400);
+
+    testnet::TcpMultiShotServer server(
+        2,
+        [](SOCKET client, int index) {
+            if (index == 0) {
+                const char first_probe[] = "srv\x01\n";
+                testnet::send_all(client, std::string(first_probe, sizeof(first_probe) - 1));
+                return;
+            }
+
+            char req[2048] = {0};
+            recv(client, req, sizeof(req), 0);
+            testnet::send_all(client, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        });
+
+    const auto results = j3_probes("127.0.0.1", server.port());
+
+    REQUIRE(results.size() >= 6);
+    REQUIRE(results.size() <= 8);
+
+    auto has_name = [&](const char* name) {
+        return std::any_of(results.begin(), results.end(), [&](const J3Result& r) { return r.name == name; });
+    };
+
+    REQUIRE(has_name("empty/close"));
+    REQUIRE(has_name("HTTP GET /"));
+    REQUIRE(has_name("HTTP CONNECT"));
+    REQUIRE(has_name("SSH banner"));
+    REQUIRE(has_name("HTTP abs-URI (proxy-style)"));
+    REQUIRE(has_name("0xFF x128"));
+
+    const auto empty_it = std::find_if(results.begin(), results.end(), [](const J3Result& r) {
+        return r.name == "empty/close";
+    });
+    REQUIRE(empty_it != results.end());
+    REQUIRE(empty_it->responded);
+    REQUIRE(empty_it->first_line == "srv..");
+
+    const auto http_it = std::find_if(results.begin(), results.end(), [](const J3Result& r) {
+        return r.name == "HTTP GET /";
+    });
+    REQUIRE(http_it != results.end());
+    REQUIRE(http_it->responded);
+    REQUIRE(http_it->first_line == "HTTP/1.1 200 OK");
+
+    REQUIRE(server.handled_clients() >= 1);
+}
+
+TEST_CASE("j3_probes keeps probe descriptors when target is unreachable") {
+    TcpTimeoutGuard timeout_guard(80);
+    const int closed = testnet::reserve_unused_tcp_port();
+    const auto results = j3_probes("127.0.0.1", closed);
+
+    REQUIRE(results.size() >= 6);
+    REQUIRE(results.size() <= 8);
+    REQUIRE(std::all_of(results.begin(), results.end(), [](const J3Result& r) {
+        return !r.name.empty() && !r.responded;
+    }));
 }

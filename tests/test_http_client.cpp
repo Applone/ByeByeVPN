@@ -257,3 +257,111 @@ TEST_CASE("http_get connect failure for refused port") {
     REQUIRE(r.status == 0);
     REQUIRE(r.err.rfind("connect ", 0) == 0);
 }
+
+TEST_CASE("http_get request target keeps query and fragment without explicit path") {
+    std::string captured;
+    testnet::TcpOneShotServer server([&](SOCKET client) {
+        char req[2048] = {0};
+        const int n = recv(client, req, sizeof(req), 0);
+        if (n > 0) captured.assign(req, n);
+        testnet::send_all(client, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+    });
+
+    const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "?q=1#frag", 1000);
+    REQUIRE(r.status == 200);
+    REQUIRE(captured.find("GET /?q=1#frag HTTP/1.1") != std::string::npos);
+}
+
+TEST_CASE("http_get status parser accepts numeric prefix in malformed status token") {
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        char req[1024] = {0};
+        recv(client, req, sizeof(req), 0);
+        testnet::send_all(client, "HTTP/1.1 20x Partial\r\n\r\nbody");
+    });
+
+    const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "/", 1000);
+    REQUIRE(r.status == 20);
+    REQUIRE(r.body == "body");
+}
+
+TEST_CASE("http_get chunked decoder stops at terminating chunk") {
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        char req[1024] = {0};
+        recv(client, req, sizeof(req), 0);
+        testnet::send_all(client,
+                          "HTTP/1.1 200 OK\r\n"
+                          "Transfer-Encoding: chunked\r\n"
+                          "Connection: close\r\n\r\n"
+                          "3\r\nabc\r\n"
+                          "0\r\n\r\n"
+                          "ignored-tail");
+    });
+
+    const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "/", 1000);
+    REQUIRE(r.status == 200);
+    REQUIRE(r.body == "abc");
+}
+
+TEST_CASE("http_get chunked decoder rejects negative chunk size") {
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        char req[1024] = {0};
+        recv(client, req, sizeof(req), 0);
+        testnet::send_all(client,
+                          "HTTP/1.1 200 OK\r\n"
+                          "Transfer-Encoding: chunked\r\n"
+                          "Connection: close\r\n\r\n"
+                          "-1\r\nabc\r\n"
+                          "0\r\n\r\n");
+    });
+
+    const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "/", 1000);
+    REQUIRE(r.status == 200);
+    REQUIRE(r.body.empty());
+}
+
+TEST_CASE("http_get caps oversized response accumulation") {
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        char req[1024] = {0};
+        recv(client, req, sizeof(req), 0);
+
+        std::string payload(1200 * 1024, 'a');
+        std::string resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(payload.size()) + "\r\n\r\n";
+        resp += payload;
+        testnet::send_all(client, resp);
+    });
+
+    const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "/", 2000);
+    REQUIRE(r.status == 200);
+    REQUIRE(r.body.size() <= 1024 * 1024 + 4096);
+    REQUIRE(r.body.size() >= 900 * 1024);
+}
+
+TEST_CASE("http_get https against plain endpoint exercises TLS failure branches") {
+    auto run_plain_tls_failure = [](const std::string& host) {
+        testnet::TcpOneShotServer server([](SOCKET client) {
+            char buf[2048] = {0};
+            recv(client, buf, sizeof(buf), 0);
+            testnet::send_all(client, "HTTP/1.1 200 OK\r\n\r\n");
+        });
+
+        return http_get("https://" + host + ":" + std::to_string(server.port()) + "/", 350);
+    };
+
+    SECTION("ip literal path") {
+        const auto r = run_plain_tls_failure("127.0.0.1");
+        if (r.err == "ssl_trust_store") {
+            SKIP("TLS trust store unavailable in this environment");
+        }
+        REQUIRE(r.status == 0);
+        REQUIRE(r.err.rfind("ssl_", 0) == 0);
+    }
+
+    SECTION("hostname path") {
+        const auto r = run_plain_tls_failure("localhost");
+        if (r.err == "ssl_trust_store") {
+            SKIP("TLS trust store unavailable in this environment");
+        }
+        REQUIRE(r.status == 0);
+        REQUIRE(r.err.rfind("ssl_", 0) == 0);
+    }
+}

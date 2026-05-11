@@ -23,6 +23,7 @@ target_link_libraries(byebyevpn_tests PRIVATE
     ${BYEBYEVPN_PLATFORM_LIBS}
 )
 target_include_directories(byebyevpn_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(byebyevpn_tests PRIVATE CATCH_CONFIG_NO_COUNTER)
 
 if(WIN32)
     target_compile_definitions(byebyevpn_tests PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
