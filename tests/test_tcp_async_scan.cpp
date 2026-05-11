@@ -68,3 +68,65 @@ TEST_CASE("scan_tcp_async discovers open loopback port") {
     REQUIRE(stats.refused + stats.other + stats.timeouts >= 1);
     REQUIRE_FALSE(stats.skipped);
 }
+
+TEST_CASE("scan_tcp_async handles null stats pointer") {
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = false;
+
+    const auto result = scan_tcp_async("127.0.0.1", {}, 16, 200, nullptr);
+    REQUIRE(result.empty());
+}
+
+TEST_CASE("scan_tcp_async counts all-refused ports") {
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = false;
+
+    std::vector<int> closed_ports;
+    for (int i = 0; i < 5; ++i) {
+        closed_ports.push_back(testnet::reserve_unused_tcp_port());
+    }
+
+    ScanStats stats{};
+    const auto result = scan_tcp_async("127.0.0.1", closed_ports, 32, 200, &stats);
+
+    REQUIRE(result.empty());
+    REQUIRE(stats.scanned == closed_ports.size());
+    REQUIRE(stats.refused + stats.other + stats.timeouts == closed_ports.size());
+    REQUIRE_FALSE(stats.skipped);
+}
+
+TEST_CASE("scan_tcp_async results are sorted by port") {
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = false;
+
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        const char kMsg[] = "hi";
+        send(client, kMsg, 2, 0);
+    });
+
+    const std::vector<int> ports = {server.port()};
+    ScanStats stats{};
+    const auto result = scan_tcp_async("127.0.0.1", ports, 32, 300, &stats);
+
+    for (size_t i = 1; i < result.size(); ++i) {
+        REQUIRE(result[i - 1].port <= result[i].port);
+    }
+}
+
+TEST_CASE("scan_tcp_async with single port") {
+    TcpSynScanGuard guard;
+    g_tcp_syn_scan = false;
+
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        const char kMsg[] = "x";
+        send(client, kMsg, 1, 0);
+    });
+
+    ScanStats stats{};
+    const auto result = scan_tcp_async("127.0.0.1", {server.port()}, 1, 500, &stats);
+
+    REQUIRE(result.size() == 1);
+    REQUIRE(result[0].port == server.port());
+    REQUIRE(result[0].connect_ms >= 0);
+    REQUIRE(stats.scanned == 1);
+}

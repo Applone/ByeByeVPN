@@ -60,3 +60,68 @@ TEST_CASE("port_hint reports known and unknown ports") {
     REQUIRE(std::string(port_hint(10809)) == "v2ray/xray HTTP");
     REQUIRE(std::string(port_hint(65000)).empty());
 }
+
+TEST_CASE("build_tcp_ports FULL generates 65535 ports") {
+    PortModeGuard guard;
+    g_port_mode = PortMode::FULL;
+
+    const auto ports = build_tcp_ports();
+    REQUIRE(ports.size() == 65535);
+    REQUIRE(ports.front() == 1);
+    REQUIRE(ports.back() == 65535);
+}
+
+TEST_CASE("build_tcp_ports RANGE reversed hi < lo yields empty") {
+    PortModeGuard guard;
+    g_port_mode = PortMode::RANGE;
+    g_range_lo = 100;
+    g_range_hi = 50;
+
+    const auto ports = build_tcp_ports();
+    REQUIRE(ports.empty());
+}
+
+TEST_CASE("build_tcp_ports RANGE exact single port") {
+    PortModeGuard guard;
+    g_port_mode = PortMode::RANGE;
+    g_range_lo = 443;
+    g_range_hi = 443;
+
+    const auto ports = build_tcp_ports();
+    REQUIRE(ports.size() == 1);
+    REQUIRE(ports[0] == 443);
+}
+
+TEST_CASE("build_tcp_ports RANGE high boundary clamping") {
+    PortModeGuard guard;
+    g_port_mode = PortMode::RANGE;
+    g_range_lo = 65530;
+    g_range_hi = 70000;
+
+    const auto ports = build_tcp_ports();
+    REQUIRE(ports.size() == 6);
+    REQUIRE(ports.back() == 65535);
+}
+
+TEST_CASE("port_hint covers additional port ranges") {
+    REQUIRE(std::string(port_hint(6443)).find("HTTPS") != std::string::npos);
+    REQUIRE(std::string(port_hint(8443)).find("HTTPS") != std::string::npos);
+    REQUIRE(std::string(port_hint(4443)).find("XTLS") != std::string::npos);
+    REQUIRE(std::string(port_hint(4433)).find("XTLS") != std::string::npos);
+    REQUIRE(std::string(port_hint(10810)).find("v2ray") != std::string::npos);
+    REQUIRE(std::string(port_hint(10800)).find("v2ray") != std::string::npos);
+    REQUIRE(std::string(port_hint(10820)).find("v2ray") != std::string::npos);
+    REQUIRE(std::string(port_hint(80)) == "HTTP");
+    REQUIRE(std::string(port_hint(443)).find("HTTPS") != std::string::npos);
+    REQUIRE(std::string(port_hint(1080)) == "SOCKS5");
+    REQUIRE(std::string(port_hint(51820)) == "WireGuard");
+    REQUIRE(std::string(port_hint(9050)) == "Tor SOCKS");
+    REQUIRE(std::string(port_hint(41641)).find("WireGuard") != std::string::npos);
+    REQUIRE(std::string(port_hint(55555)).find("AmneziaWG") != std::string::npos);
+}
+
+TEST_CASE("port_hint returns empty for non-hint ports") {
+    REQUIRE(std::string(port_hint(1)).empty());
+    REQUIRE(std::string(port_hint(12345)).empty());
+    REQUIRE(std::string(port_hint(50000)).empty());
+}

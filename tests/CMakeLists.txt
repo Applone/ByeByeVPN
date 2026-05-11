@@ -10,6 +10,8 @@ set(BYEBYEVPN_TEST_SOURCES
     test_service_probes.cpp
     test_vpn_probes.cpp
     test_openssl_runtime.cpp
+    test_brand_cert.cpp
+    test_j3_probes.cpp
 )
 
 add_executable(byebyevpn_tests ${BYEBYEVPN_TEST_SOURCES})

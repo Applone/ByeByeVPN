@@ -82,3 +82,79 @@ TEST_CASE("json_get_str tolerates malformed input") {
     REQUIRE(json_get_str("{", "name").empty());
     REQUIRE(json_get_str("{\"name\":\"alice\"", "name") == "alice");
 }
+
+TEST_CASE("json_get_str unicode escape") {
+    REQUIRE(json_get_str(R"({"a":"\u0041B"})", "a") == "?B");
+}
+
+TEST_CASE("col returns empty string when no_color is true") {
+    const bool saved = g_no_color;
+    g_no_color = true;
+    REQUIRE(std::string(col(C::RED)).empty());
+    REQUIRE(std::string(col(C::BOLD)).empty());
+    g_no_color = false;
+    REQUIRE_FALSE(std::string(col(C::RED)).empty());
+    g_no_color = saved;
+}
+
+TEST_CASE("hex_s edge cases") {
+    REQUIRE(hex_s(nullptr, 0, false).empty());
+    const unsigned char single = 0x42;
+    REQUIRE(hex_s(&single, 1, true) == "42");
+    REQUIRE(hex_s(&single, 1, false) == "42");
+}
+
+TEST_CASE("url_encode preserves unreserved characters") {
+    REQUIRE(url_encode("abc123") == "abc123");
+    REQUIRE(url_encode("a-b_c.d~e") == "a-b_c.d~e");
+    REQUIRE(url_encode("") == "");
+}
+
+TEST_CASE("url_encode encodes more special characters") {
+    REQUIRE(url_encode("/") == "%2F");
+    REQUIRE(url_encode("?") == "%3F");
+    REQUIRE(url_encode("#") == "%23");
+    REQUIRE(url_encode("@") == "%40");
+}
+
+TEST_CASE("split more edge cases") {
+    const auto empty = split("", ',');
+    REQUIRE(empty.size() == 1);
+    REQUIRE(empty[0].empty());
+
+    const auto leading = split(",a", ',');
+    REQUIRE(leading.size() == 2);
+    REQUIRE(leading[0].empty());
+    REQUIRE(leading[1] == "a");
+
+    const auto single = split("only", ',');
+    REQUIRE(single.size() == 1);
+    REQUIRE(single[0] == "only");
+}
+
+TEST_CASE("trim various whitespace types") {
+    REQUIRE(trim("") == "");
+    REQUIRE(trim("   ") == "");
+    REQUIRE(trim("nopad") == "nopad");
+    REQUIRE(trim("\t\n\r hello \t\n\r") == "hello");
+}
+
+TEST_CASE("starts_with edge cases") {
+    REQUIRE(starts_with("", ""));
+    REQUIRE(starts_with("abc", ""));
+    REQUIRE_FALSE(starts_with("", "a"));
+    REQUIRE_FALSE(starts_with("ab", "abc"));
+}
+
+TEST_CASE("contains edge cases") {
+    REQUIRE(contains("", ""));
+    REQUIRE(contains("abc", ""));
+    REQUIRE_FALSE(contains("", "a"));
+}
+
+TEST_CASE("tolower_s with mixed and empty input") {
+    REQUIRE(tolower_s("ABC") == "abc");
+    REQUIRE(tolower_s("123") == "123");
+    REQUIRE(tolower_s("") == "");
+    REQUIRE(tolower_s("MiXeD") == "mixed");
+}

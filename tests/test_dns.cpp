@@ -30,3 +30,31 @@ TEST_CASE("resolve_host reports invalid host errors") {
     REQUIRE(r.ips.empty());
     REQUIRE(r.primary_ip.empty());
 }
+
+TEST_CASE("resolve_host IPv4 literal sets family to v4") {
+    const auto r = resolve_host("192.168.1.1");
+    REQUIRE(r.err.empty());
+    REQUIRE(r.family == "v4");
+    REQUIRE(r.primary_ip == "192.168.1.1");
+    REQUIRE(r.ips.size() == 1);
+    REQUIRE(r.ms >= 0);
+}
+
+TEST_CASE("resolve_host IPv6 literal sets family to v6") {
+    const auto r = resolve_host("fe80::1");
+    REQUIRE(r.err.empty());
+    REQUIRE(r.family == "v6");
+    REQUIRE(r.primary_ip == "fe80::1");
+    REQUIRE(r.ips.size() == 1);
+}
+
+TEST_CASE("resolve_host preserves host field") {
+    const auto r = resolve_host("127.0.0.1");
+    REQUIRE(r.host == "127.0.0.1");
+}
+
+TEST_CASE("resolve_host nonexistent domain") {
+    const auto r = resolve_host("this-domain-does-not-exist-xyz123.invalid");
+    REQUIRE_FALSE(r.err.empty());
+    REQUIRE(r.ips.empty());
+}
