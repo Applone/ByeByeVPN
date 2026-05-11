@@ -28,7 +28,7 @@ UdpResult udp_probe(const std::string& host, int port, const unsigned char* payl
     DWORD to = (DWORD)timeout_ms;
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
 #else
-    struct timeval tv;
+    struct timeval tv{};
     tv.tv_sec = timeout_ms / 1000;
     tv.tv_usec = (timeout_ms % 1000) * 1000;
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
