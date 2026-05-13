@@ -246,3 +246,43 @@ TEST_CASE("printable_prefix edge cases") {
     REQUIRE(printable_prefix(std::string(1, static_cast<char>(0x7F)), 10) == ".");
     REQUIRE(printable_prefix(std::string(1, static_cast<char>(31)), 10) == ".");
 }
+
+TEST_CASE("fp_ssh silent server with no banner") {
+    testnet::TcpOneShotServer server([](SOCKET) {
+        // hold the connection without sending
+    });
+
+    const auto r = fp_ssh("", "127.0.0.1", server.port());
+    REQUIRE(r.service == "SSH?");
+    REQUIRE(r.details == "no SSH banner (but port open)");
+}
+
+TEST_CASE("fp_http_connect silent server marks result silent") {
+    testnet::TcpOneShotServer server([](SOCKET client) {
+        char req[512] = {0};
+        recv(client, req, sizeof(req), 0);
+        // do not respond
+    });
+
+    const auto r = fp_http_connect("127.0.0.1", server.port());
+    REQUIRE(r.silent);
+    REQUIRE(r.service == "HTTP-PROXY?");
+}
+
+TEST_CASE("fp_http_connect unconnectable target reports silent") {
+    const int closed = testnet::reserve_unused_tcp_port();
+    const auto r = fp_http_connect("127.0.0.1", closed);
+    REQUIRE(r.silent);
+}
+
+TEST_CASE("fp_http_plain unconnectable target reports silent") {
+    const int closed = testnet::reserve_unused_tcp_port();
+    const auto r = fp_http_plain("127.0.0.1", closed);
+    REQUIRE(r.silent);
+}
+
+TEST_CASE("fp_socks5 unconnectable target reports silent") {
+    const int closed = testnet::reserve_unused_tcp_port();
+    const auto r = fp_socks5("127.0.0.1", closed);
+    REQUIRE(r.silent);
+}

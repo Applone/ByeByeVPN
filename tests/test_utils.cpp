@@ -2,6 +2,35 @@
 
 #include "core/utils.h"
 
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+void save_write_stripped(const char* s, size_t n);
+
+namespace {
+
+struct SaveFpGuard {
+    FILE* prev = g_save_fp;
+    ~SaveFpGuard() { g_save_fp = prev; }
+};
+
+std::string read_tmpfile(FILE* fp) {
+    std::string out;
+    if (!fp) return out;
+    std::fflush(fp);
+    std::rewind(fp);
+    char buf[512];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), fp)) > 0) {
+        out.append(buf, buf + n);
+    }
+    return out;
+}
+
+} // namespace
+
 TEST_CASE("tolower_s lowers ASCII letters") {
     REQUIRE(tolower_s("AbC-123") == "abc-123");
 }
@@ -157,4 +186,154 @@ TEST_CASE("tolower_s with mixed and empty input") {
     REQUIRE(tolower_s("123") == "123");
     REQUIRE(tolower_s("") == "");
     REQUIRE(tolower_s("MiXeD") == "mixed");
+}
+
+TEST_CASE("tee_printf returns 0 for null format") {
+    SaveFpGuard guard;
+    g_save_fp = nullptr;
+    REQUIRE(tee_printf(nullptr) == 0);
+}
+
+TEST_CASE("tee_printf returns 0 for empty format string") {
+    SaveFpGuard guard;
+    g_save_fp = nullptr;
+    REQUIRE(tee_printf("%s", "") == 0);
+}
+
+TEST_CASE("tee_printf writes formatted output to save file") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    const int n = tee_printf("v=%d %s", 42, "x");
+    REQUIRE(n == 6);
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured == "v=42 x");
+    std::fclose(fp);
+}
+
+TEST_CASE("tee_printf strips ANSI escapes when saving") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    tee_printf("\x1b[31mred\x1b[0m text");
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured == "red text");
+    std::fclose(fp);
+}
+
+TEST_CASE("tee_printf handles output larger than internal buffer") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    const std::string big(4096, 'X');
+    const int n = tee_printf("%s", big.c_str());
+    REQUIRE(n == static_cast<int>(big.size()));
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured == big);
+    std::fclose(fp);
+}
+
+TEST_CASE("tee_puts returns 0 for null input") {
+    SaveFpGuard guard;
+    g_save_fp = nullptr;
+    REQUIRE(tee_puts(nullptr) == 0);
+}
+
+TEST_CASE("tee_puts writes string and newline to save file") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    tee_puts("hello");
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured == "hello\n");
+    std::fclose(fp);
+}
+
+TEST_CASE("tee_puts strips ANSI escapes when saving") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    tee_puts("\x1b[1mbold\x1b[0m");
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured == "bold\n");
+    std::fclose(fp);
+}
+
+TEST_CASE("save_write_stripped is a noop when save_fp is null") {
+    SaveFpGuard guard;
+    g_save_fp = nullptr;
+    save_write_stripped("ignored", 7);
+    SUCCEED("did not crash");
+}
+
+TEST_CASE("save_write_stripped is a noop for null buffer or zero length") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    save_write_stripped(nullptr, 5);
+    save_write_stripped("data", 0);
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured.empty());
+    std::fclose(fp);
+}
+
+TEST_CASE("save_write_stripped removes incomplete trailing escape") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    const char input[] = "abc\x1b[31";
+    save_write_stripped(input, sizeof(input) - 1);
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured == "abc");
+    std::fclose(fp);
+}
+
+TEST_CASE("banner writes content to save file") {
+    SaveFpGuard guard;
+    FILE* fp = std::tmpfile();
+    REQUIRE(fp != nullptr);
+    g_save_fp = fp;
+
+    const bool prev_no_color = g_no_color;
+    g_no_color = true;
+    banner();
+    g_no_color = prev_no_color;
+
+    const std::string captured = read_tmpfile(fp);
+    REQUIRE(captured.find("VPN detectability scanner") != std::string::npos);
+    std::fclose(fp);
+}
+
+TEST_CASE("enable_vt is callable on this platform") {
+    enable_vt();
+    SUCCEED("did not crash");
+}
+
+TEST_CASE("col returns original pointer when color is enabled") {
+    const bool prev = g_no_color;
+    g_no_color = false;
+    REQUIRE(col(C::RED) == C::RED);
+    REQUIRE(col(C::RST) == C::RST);
+    g_no_color = prev;
 }

@@ -85,7 +85,7 @@ llvm-cov show \
 echo "Running sanitizers via Podman..."
 for SAN in asan-ubsan tsan msan; do
     echo "Running ${SAN}..."
-    podman run -i --rm -v "$(pwd):/workspace" -w /workspace "$PODMAN_IMAGE" bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
+    podman run -i --rm --network=host --privileged -v "$(pwd):/workspace" -w /workspace "$PODMAN_IMAGE" bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
 set -euo pipefail
 
 SAN=$1
@@ -120,7 +120,10 @@ esac
 # Cache OpenSSL locally
 if [ ! -d "$OPENSSL_PREFIX" ]; then
     mkdir -p "/workspace/deps"
-    curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "/workspace/deps/openssl-${OPENSSL_VERSION}.tar.gz"
+    if [ ! -f "/workspace/deps/openssl-${OPENSSL_VERSION}.tar.gz" ]; then
+        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "/workspace/deps/openssl-${OPENSSL_VERSION}.tar.gz"
+    fi
+    rm -rf "/workspace/deps/openssl-${OPENSSL_VERSION}"
     tar -xzf "/workspace/deps/openssl-${OPENSSL_VERSION}.tar.gz" -C "/workspace/deps"
 
     cd "/workspace/deps/openssl-${OPENSSL_VERSION}"
