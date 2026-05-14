@@ -28,6 +28,16 @@ Given an IP or hostname, run a remote detectability methodology focused on moder
 6. **Active junk probing (J3)**: multi-probe behaviour checks per TLS-like port
 7. **Verdict**: Score 0-100, stack identification, hardening advice
 
+## Differences from Original
+
+This fork introduces significant architectural and scope changes compared to the original upstream repository:
+
+* **Build System & CI:** Transitioned to a modern CMake-based build system integrated with GitHub Actions for automated static analysis, code coverage, and sanitizer checks.
+* **Testing:** Introduced a robust unit testing suite to ensure the reliability of core networking, probing, and utility components.
+* **Refocused Scope:** Streamlined the scanning capabilities to focus purely on modern signature-less VPN stacks (specifically WireGuard, AmneziaWG, and TLS anomalies). Legacy protocols and exhaustive DPI-specific emulation rules (such as OpenVPN, IKEv2, L2TP, Hysteria2, QUIC, and Tailscale) were removed to maintain a lightweight profile.
+* **Codebase Refactoring:** Restructured the project into modular, asynchronous components for TCP and UDP scanning, resulting in a cleaner and more maintainable architecture.
+* **Simplified Documentation:** Replaced the exhaustive multi-lingual documentation with a concise English README aligned with the refined feature set.
+
 ## Build
 
 ### Linux (CMake + Ninja)
