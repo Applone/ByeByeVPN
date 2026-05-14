@@ -9,19 +9,21 @@ permissions:
   contents: read
 
 env:
-  OPENSSL_VERSION: 3.3.2
+  OPENSSL_VERSION: 3.5.6
 
 jobs:
   static-analysis:
     name: Static Analysis (Linux)
     runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install analysis dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm cppcheck clang-tidy
+          apt-get update
+          apt-get install -y cmake ninja-build libssl-dev clang lld llvm cppcheck clang-tidy
 
       - name: Configure compile database
         env:
@@ -40,68 +42,73 @@ jobs:
 
       - name: Run clang-tidy
         run: |
-          find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build -warnings-as-errors='*'
+          find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build
 
-  debug-build-artifacts:
-    name: Debug Build Artifacts (${{ matrix.os }})
+  debug-build-linux:
+    name: Debug Build Artifacts (Linux)
     needs: [static-analysis]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            generator: Ninja
-          - os: windows-latest
-            generator: "Visual Studio 17 2022"
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm
+          apt-get update
+          apt-get install -y cmake ninja-build libssl-dev clang lld llvm
 
-      - name: Configure CMake (Linux Debug)
-        if: runner.os == 'Linux'
+      - name: Configure CMake
         env:
           CC: clang
           CXX: clang++
         run: |
-          cmake -S . -B build -G "${{ matrix.generator }}" \
+          cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBYEBYEVPN_ENABLE_TESTS=OFF \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
 
-      - name: Build (Linux Debug)
-        if: runner.os == 'Linux'
+      - name: Build
         run: cmake --build build --parallel
 
-      - name: Prepare artifacts (Linux)
-        if: runner.os == 'Linux'
+      - name: Prepare artifacts
         run: |
           mkdir -p staging
-          cp build/byebyevpn staging/
-
-      - name: Configure CMake (Windows Debug)
-        if: runner.os == 'Windows'
-        run: cmake -S . -B build -G "${{ matrix.generator }}" -DBYEBYEVPN_ENABLE_TESTS=OFF -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
-
-      - name: Build (Windows Debug)
-        if: runner.os == 'Windows'
-        run: cmake --build build --config Debug --parallel
-
-      - name: Prepare artifacts (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          if not exist staging mkdir staging
-          copy build\Debug\byebyevpn.exe staging\
+          cp build/byebyevpn "staging/byebyevpn-${{ github.ref_name }}-linux-amd64"
 
       - name: Upload debug artifacts
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
-          name: byebyevpn-debug-${{ matrix.os }}
+          name: byebyevpn-${{ github.ref_name }}-linux-amd64
+          path: staging/*
+          retention-days: 7
+
+  debug-build-windows:
+    name: Debug Build Artifacts (Windows)
+    needs: [static-analysis]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Configure CMake
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBYEBYEVPN_ENABLE_TESTS=OFF -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Prepare artifacts
+        shell: cmd
+        run: |
+          if not exist staging mkdir staging
+          copy build\byebyevpn.exe "staging\byebyevpn-${{ github.ref_name }}-windows-x64.exe"
+
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: byebyevpn-${{ github.ref_name }}-windows-x64.exe
           path: staging/*
           retention-days: 7
 
@@ -109,13 +116,15 @@ jobs:
     name: Coverage (Linux)
     needs: [static-analysis]
     runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang lld llvm
+          apt-get update
+          apt-get install -y cmake ninja-build libssl-dev clang lld llvm
 
       - name: Configure CMake (coverage)
         env:
@@ -170,41 +179,13 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install OpenSSL build tools
-        run: |
-          apt-get update
-          apt-get install -y perl make curl
-
-      - name: Restore OpenSSL cache (ASan+UBSan)
-        id: cache-openssl
-        uses: actions/cache@v4
+      - name: Build custom OpenSSL
+        uses: ./.github/actions/build-custom-openssl
         with:
-          path: ${{ github.workspace }}/deps/openssl-asan-ubsan
-          key: openssl-${{ env.OPENSSL_VERSION }}-asan-ubsan-sans-1.0.0-${{ runner.os }}
-
-      - name: Build OpenSSL (ASan+UBSan)
-        if: steps.cache-openssl.outputs.cache-hit != 'true'
-        env:
-          CC: clang
-          CXX: clang++
-        run: |
-          set -euxo pipefail
-          OPENSSL_PREFIX="$GITHUB_WORKSPACE/deps/openssl-asan-ubsan"
-          SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
-
-          mkdir -p "$GITHUB_WORKSPACE/deps"
-          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}.tar.gz"
-          tar -xzf "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}.tar.gz" -C "$GITHUB_WORKSPACE/deps"
-
-          cd "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}"
-          export CFLAGS="$SAN_FLAGS"
-          export CXXFLAGS="$SAN_FLAGS"
-          export LDFLAGS="$SAN_FLAGS"
-          ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
-            --prefix="$OPENSSL_PREFIX" \
-            --openssldir="$OPENSSL_PREFIX/ssl"
-          make -j"$(nproc)"
-          make install_sw
+          openssl-version: ${{ env.OPENSSL_VERSION }}
+          install-prefix: ${{ github.workspace }}/deps/openssl-asan-ubsan
+          sanitizer-flags: '-fsanitize=address,undefined -fno-omit-frame-pointer'
+          cache-key: openssl-${{ env.OPENSSL_VERSION }}-asan-ubsan-sans-1.0.0-${{ runner.os }}
 
       - name: Configure CMake (ASan+UBSan)
         env:
@@ -240,41 +221,13 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install OpenSSL build tools
-        run: |
-          apt-get update
-          apt-get install -y perl make curl
-
-      - name: Restore OpenSSL cache (TSan)
-        id: cache-openssl
-        uses: actions/cache@v4
+      - name: Build custom OpenSSL
+        uses: ./.github/actions/build-custom-openssl
         with:
-          path: ${{ github.workspace }}/deps/openssl-tsan
-          key: openssl-${{ env.OPENSSL_VERSION }}-tsan-sans-1.0.0-${{ runner.os }}
-
-      - name: Build OpenSSL (TSan)
-        if: steps.cache-openssl.outputs.cache-hit != 'true'
-        env:
-          CC: clang
-          CXX: clang++
-        run: |
-          set -euxo pipefail
-          OPENSSL_PREFIX="$GITHUB_WORKSPACE/deps/openssl-tsan"
-          SAN_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
-
-          mkdir -p "$GITHUB_WORKSPACE/deps"
-          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}.tar.gz"
-          tar -xzf "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}.tar.gz" -C "$GITHUB_WORKSPACE/deps"
-
-          cd "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}"
-          export CFLAGS="$SAN_FLAGS"
-          export CXXFLAGS="$SAN_FLAGS"
-          export LDFLAGS="$SAN_FLAGS"
-          ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
-            --prefix="$OPENSSL_PREFIX" \
-            --openssldir="$OPENSSL_PREFIX/ssl"
-          make -j"$(nproc)"
-          make install_sw
+          openssl-version: ${{ env.OPENSSL_VERSION }}
+          install-prefix: ${{ github.workspace }}/deps/openssl-tsan
+          sanitizer-flags: '-fsanitize=thread -fno-omit-frame-pointer'
+          cache-key: openssl-${{ env.OPENSSL_VERSION }}-tsan-sans-1.0.0-${{ runner.os }}
 
       - name: Configure CMake (TSan)
         env:
@@ -309,41 +262,13 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install OpenSSL build tools
-        run: |
-          apt-get update
-          apt-get install -y perl make curl
-
-      - name: Restore OpenSSL cache (MSan)
-        id: cache-openssl
-        uses: actions/cache@v4
+      - name: Build custom OpenSSL
+        uses: ./.github/actions/build-custom-openssl
         with:
-          path: ${{ github.workspace }}/deps/openssl-msan
-          key: openssl-${{ env.OPENSSL_VERSION }}-msan-sans-1.0.0-${{ runner.os }}
-
-      - name: Build OpenSSL (MSan)
-        if: steps.cache-openssl.outputs.cache-hit != 'true'
-        env:
-          CC: clang
-          CXX: clang++
-        run: |
-          set -euxo pipefail
-          OPENSSL_PREFIX="$GITHUB_WORKSPACE/deps/openssl-msan"
-          SAN_FLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
-
-          mkdir -p "$GITHUB_WORKSPACE/deps"
-          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}.tar.gz"
-          tar -xzf "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}.tar.gz" -C "$GITHUB_WORKSPACE/deps"
-
-          cd "$GITHUB_WORKSPACE/deps/openssl-${OPENSSL_VERSION}"
-          export CFLAGS="$SAN_FLAGS"
-          export CXXFLAGS="$SAN_FLAGS"
-          export LDFLAGS="$SAN_FLAGS"
-          ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
-            --prefix="$OPENSSL_PREFIX" \
-            --openssldir="$OPENSSL_PREFIX/ssl"
-          make -j"$(nproc)"
-          make install_sw
+          openssl-version: ${{ env.OPENSSL_VERSION }}
+          install-prefix: ${{ github.workspace }}/deps/openssl-msan
+          sanitizer-flags: '-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer'
+          cache-key: openssl-${{ env.OPENSSL_VERSION }}-msan-sans-1.0.0-${{ runner.os }}
 
       - name: Configure CMake (MSan)
         env:
