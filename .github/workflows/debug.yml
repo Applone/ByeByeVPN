@@ -38,6 +38,7 @@ jobs:
       - name: Run cppcheck
         run: |
           cppcheck --std=c++20 --enable=warning,style,performance,portability \
+            --suppress=normalCheckLevelMaxBranches \
             --error-exitcode=1 --inline-suppr --quiet src
 
       - name: Run clang-tidy
