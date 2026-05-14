@@ -10,7 +10,9 @@ while [ $# -gt 0 ]; do
         shift
         ;;
         *)
-        shift
+        echo "Unknown option: $1" >&2
+        echo "Usage: $0 [--keep]" >&2
+        exit 2
         ;;
     esac
 done
@@ -99,7 +101,7 @@ export CXX=clang++
 # Install OpenSSL build deps
 apt-get update -y && apt-get install -y perl make curl
 
-OPENSSL_PREFIX="/workspace/deps/openssl-${SAN}"
+OPENSSL_PREFIX="/workspace/deps/openssl-${SAN}-${OPENSSL_VERSION}"
 LIBCXX_ROOT="/opt/libcxx_${SAN//-/_}"
 BUILD_DIR="build-${SAN}"
 
