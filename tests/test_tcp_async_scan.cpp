@@ -115,15 +115,24 @@ TEST_CASE("scan_tcp_async results are sorted by port") {
     TcpSynScanGuard guard;
     g_tcp_syn_scan = false;
 
-    testnet::TcpOneShotServer server([](SOCKET client) {
+    testnet::TcpOneShotServer server_a([](SOCKET client) {
         const char kMsg[] = "hi";
         send(client, kMsg, 2, 0);
     });
+    testnet::TcpOneShotServer server_b([](SOCKET client) {
+        const char kMsg[] = "yo";
+        send(client, kMsg, 2, 0);
+    });
+    testnet::TcpOneShotServer server_c([](SOCKET client) {
+        const char kMsg[] = "go";
+        send(client, kMsg, 2, 0);
+    });
 
-    const std::vector<int> ports = {server.port()};
+    const std::vector<int> ports = {server_b.port(), server_a.port(), server_c.port()};
     ScanStats stats{};
     const auto result = scan_tcp_async("127.0.0.1", ports, 32, 300, &stats);
 
+    REQUIRE(result.size() >= 2);
     for (size_t i = 1; i < result.size(); ++i) {
         REQUIRE(result[i - 1].port <= result[i].port);
     }

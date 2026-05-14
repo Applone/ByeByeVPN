@@ -16,6 +16,11 @@ struct SaveFpGuard {
     ~SaveFpGuard() { g_save_fp = prev; }
 };
 
+struct NoColorGuard {
+    bool prev = g_no_color;
+    ~NoColorGuard() { g_no_color = prev; }
+};
+
 std::string read_tmpfile(FILE* fp) {
     std::string out;
     if (!fp) return out;
@@ -117,13 +122,12 @@ TEST_CASE("json_get_str unicode escape") {
 }
 
 TEST_CASE("col returns empty string when no_color is true") {
-    const bool saved = g_no_color;
+    NoColorGuard color_guard;
     g_no_color = true;
     REQUIRE(std::string(col(C::RED)).empty());
     REQUIRE(std::string(col(C::BOLD)).empty());
     g_no_color = false;
     REQUIRE_FALSE(std::string(col(C::RED)).empty());
-    g_no_color = saved;
 }
 
 TEST_CASE("hex_s edge cases") {
@@ -315,10 +319,9 @@ TEST_CASE("banner writes content to save file") {
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
-    const bool prev_no_color = g_no_color;
+    NoColorGuard color_guard;
     g_no_color = true;
     banner();
-    g_no_color = prev_no_color;
 
     const std::string captured = read_tmpfile(fp);
     REQUIRE(captured.find("VPN detectability scanner") != std::string::npos);
@@ -331,9 +334,8 @@ TEST_CASE("enable_vt is callable on this platform") {
 }
 
 TEST_CASE("col returns original pointer when color is enabled") {
-    const bool prev = g_no_color;
+    NoColorGuard color_guard;
     g_no_color = false;
     REQUIRE(col(C::RED) == C::RED);
     REQUIRE(col(C::RST) == C::RST);
-    g_no_color = prev;
 }

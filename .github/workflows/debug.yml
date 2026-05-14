@@ -40,7 +40,7 @@ jobs:
 
       - name: Run clang-tidy
         run: |
-          clang-tidy -p build -warnings-as-errors='*' $(find src -name '*.cpp' -print)
+          find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build -warnings-as-errors='*'
 
   debug-build-artifacts:
     name: Debug Build Artifacts (${{ matrix.os }})

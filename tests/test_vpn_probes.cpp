@@ -9,6 +9,9 @@
 
 namespace {
 
+constexpr std::size_t kWireguardPacketSize = 148;
+constexpr std::size_t kAmneziawgJunkCap = 64;
+
 struct UdpJitterGuard {
     bool jitter = g_udp_jitter;
     ~UdpJitterGuard() { g_udp_jitter = jitter; }
@@ -35,7 +38,7 @@ TEST_CASE("wireguard_probe sends 148-byte packet with MessageInitiation header")
     REQUIRE(r.responded);
     REQUIRE(r.bytes > 0);
     REQUIRE(r.err.empty());
-    REQUIRE(observed_size.load(std::memory_order_relaxed) == 148);
+    REQUIRE(observed_size.load(std::memory_order_relaxed) == kWireguardPacketSize);
     REQUIRE(observed_first.load(std::memory_order_relaxed) == 0x01U);
 }
 
@@ -58,7 +61,7 @@ TEST_CASE("amneziawg_probe caps junk prefix at 64 bytes and preserves header") {
 
     testnet::UdpOneShotServer server([&](SOCKET sock, const sockaddr_in& peer, const std::vector<unsigned char>& data) {
         observed_size.store(data.size(), std::memory_order_relaxed);
-        observed_marker.store(data.size() > 64 ? static_cast<unsigned int>(data[64]) : 0U,
+        observed_marker.store(data.size() > kAmneziawgJunkCap ? static_cast<unsigned int>(data[kAmneziawgJunkCap]) : 0U,
                               std::memory_order_relaxed);
         const std::string reply = "awg";
         sendto(sock, reply.data(), static_cast<int>(reply.size()), 0,
@@ -68,7 +71,7 @@ TEST_CASE("amneziawg_probe caps junk prefix at 64 bytes and preserves header") {
     const auto r = amneziawg_probe("127.0.0.1", server.port(), 99);
     REQUIRE(r.responded);
     REQUIRE(r.err.empty());
-    REQUIRE(observed_size.load(std::memory_order_relaxed) == 64 + 148);
+    REQUIRE(observed_size.load(std::memory_order_relaxed) == kAmneziawgJunkCap + kWireguardPacketSize);
     REQUIRE(observed_marker.load(std::memory_order_relaxed) == 0x01U);
 }
 
@@ -89,7 +92,7 @@ TEST_CASE("amneziawg_probe with zero junk prefix matches wireguard layout") {
 
     const auto r = amneziawg_probe("127.0.0.1", server.port(), 0);
     REQUIRE(r.responded);
-    REQUIRE(observed_size.load(std::memory_order_relaxed) == 148);
+    REQUIRE(observed_size.load(std::memory_order_relaxed) == kWireguardPacketSize);
     REQUIRE(observed_first.load(std::memory_order_relaxed) == 0x01U);
 }
 
@@ -111,7 +114,7 @@ TEST_CASE("amneziawg_probe accepts mid-range junk prefix without truncation") {
 
     const auto r = amneziawg_probe("127.0.0.1", server.port(), 16);
     REQUIRE(r.responded);
-    REQUIRE(observed_size.load(std::memory_order_relaxed) == 16 + 148);
+    REQUIRE(observed_size.load(std::memory_order_relaxed) == 16 + kWireguardPacketSize);
     REQUIRE(observed_marker.load(std::memory_order_relaxed) == 0x01U);
 }
 

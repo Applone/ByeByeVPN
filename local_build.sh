@@ -3,10 +3,13 @@ set -euo pipefail
 
 KEEP_ARTIFACTS=0
 
-for arg in "$@"; do
-    case $arg in
+while [ $# -gt 0 ]; do
+    case $1 in
         --keep)
         KEEP_ARTIFACTS=1
+        shift
+        ;;
+        *)
         shift
         ;;
     esac
@@ -43,11 +46,9 @@ cmake -S . -B build -G Ninja \
 cppcheck --std=c++20 --enable=warning,style,performance,portability \
     --error-exitcode=1 --inline-suppr --quiet src
 
-# Run clang-tidy if cpp files exist
-CPP_FILES=$(find src -name '*.cpp' -print)
-if [ -n "$CPP_FILES" ]; then
-    clang-tidy -p build --checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*' $CPP_FILES
-fi
+# Run clang-tidy on cpp files (NUL-delimited to handle paths with whitespace)
+find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build \
+    --checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*'
 
 echo "Building debug artifacts..."
 cmake --build build --parallel

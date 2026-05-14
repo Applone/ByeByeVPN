@@ -8,6 +8,8 @@
 #include <openssl/ssl.h>
 
 #include <string>
+#include <thread>
+#include <vector>
 
 TEST_CASE("openssl runtime initializes successfully") {
     std::string err;
@@ -22,9 +24,19 @@ TEST_CASE("openssl_runtime_init tolerates a null error pointer") {
 }
 
 TEST_CASE("openssl_runtime_init is safe to call multiple times concurrently") {
-    REQUIRE(openssl_runtime_init());
-    REQUIRE(openssl_runtime_init());
-    REQUIRE(openssl_runtime_init());
+    constexpr int kThreads = 16;
+    std::vector<std::thread> workers;
+    std::vector<char> results(kThreads, 0);
+    workers.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        workers.emplace_back([i, &results]() {
+            results[i] = openssl_runtime_init() ? 1 : 0;
+        });
+    }
+    for (auto& t : workers) t.join();
+    for (int i = 0; i < kThreads; ++i) {
+        REQUIRE(results[i] == 1);
+    }
 }
 
 TEST_CASE("ssl_attach_socket validates input") {
