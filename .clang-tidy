@@ -1,23 +1,20 @@
 Checks: >
   -*,
   bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-narrowing-conversions,
   cert-*,
   clang-analyzer-*,
   concurrency-*,
-  cppcoreguidelines-*,
-  misc-*,
-  modernize-*,
   performance-*,
+  -performance-enum-size,
   portability-*,
-  readability-*,
-  -modernize-use-trailing-return-type,
-  -readability-identifier-length,
-  -cppcoreguidelines-avoid-magic-numbers,
-  -readability-magic-numbers,
-  -misc-non-private-member-variables-in-classes,
-  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
-  -readability-braces-around-statements,
-  -cppcoreguidelines-pro-type-reinterpret-cast
+  readability-container-size-empty,
+  readability-duplicate-include,
+  readability-misleading-indentation,
+  readability-redundant-control-flow,
+  readability-redundant-smartptr-get
 
 WarningsAsErrors: '*'
 
