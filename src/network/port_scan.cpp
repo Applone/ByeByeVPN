@@ -40,7 +40,7 @@ std::vector<int> build_tcp_ports() {
             const int lo = std::max(1, g_range_lo);
             const int hi = std::min(65535, g_range_hi);
             if (hi < lo) break;
-            p.reserve(static_cast<size_t>(hi - lo + 1));
+            p.reserve(static_cast<size_t>(hi) - static_cast<size_t>(lo) + 1);
             for (int i = lo; i <= hi; ++i) p.push_back(i);
             break;
         }

@@ -37,8 +37,8 @@
 #include <poll.h>
 #include <sys/epoll.h>
 #include <unistd.h>
-inline bool _kbhit() { return false; }
-inline int _getch() { return 0; }
+inline bool kbhit_stub() { return false; }
+inline int getch_stub() { return 0; }
 #endif
 
 namespace {

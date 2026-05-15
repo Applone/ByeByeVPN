@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
-#include <cctype>
 
 #ifdef _WIN32
 #include <windows.h>

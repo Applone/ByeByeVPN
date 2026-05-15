@@ -87,14 +87,8 @@ SniConsistency sni_consistency(const std::string& ip, int port, const std::strin
             }
         }
         if (!c.reality_like) c.default_cert_only = true;
-    } else if (total >= 3 && same == 0 && c.distinct_certs >= 3) {
-        if (!c.brand_claimed.empty()) {
-            c.cert_impersonation = true;
-            c.reality_like = true;
-            c.matched_foreign_sni = c.brand_claimed;
-            c.passthrough_mode   = true;
-        }
-    } else if (total >= 3 && same > 0 && same < total) {
+    } else if (total >= 3 && ((same == 0 && c.distinct_certs >= 3) ||
+                               (same > 0 && same < total))) {
         if (!c.brand_claimed.empty()) {
             c.cert_impersonation = true;
             c.reality_like = true;

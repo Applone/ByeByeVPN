@@ -583,7 +583,7 @@ int main_impl(int argc, char** argv) {
     if (pos.empty()) {
         interactive();
     } else {
-        const string cmd = pos[0];
+        const string& cmd = pos[0];
 
         if (cmd == "scan" || cmd == "full") {
             if (pos.size() < 2) {
