@@ -1,0 +1,59 @@
+name: Build Custom OpenSSL
+description: Download, configure, and build OpenSSL from source with sanitizer flags
+
+inputs:
+  openssl-version:
+    description: OpenSSL version to build
+    required: true
+  install-prefix:
+    description: Installation prefix path
+    required: true
+  sanitizer-flags:
+    description: Sanitizer compiler/linker flags
+    required: true
+  cache-key:
+    description: Cache key for this OpenSSL build
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install OpenSSL build tools
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y perl make curl
+
+    - name: Restore OpenSSL cache
+      id: cache-openssl
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.install-prefix }}
+        key: ${{ inputs.cache-key }}
+
+    - name: Build OpenSSL
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CC: clang
+        CXX: clang++
+      run: |
+        set -euxo pipefail
+        OPENSSL_VERSION="${{ inputs.openssl-version }}"
+        OPENSSL_PREFIX="${{ inputs.install-prefix }}"
+        SAN_FLAGS="${{ inputs.sanitizer-flags }}"
+
+        mkdir -p "$(dirname "$OPENSSL_PREFIX")"
+        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+          -o "/tmp/openssl-${OPENSSL_VERSION}.tar.gz"
+        tar -xzf "/tmp/openssl-${OPENSSL_VERSION}.tar.gz" -C /tmp
+
+        cd "/tmp/openssl-${OPENSSL_VERSION}"
+        export CFLAGS="$SAN_FLAGS"
+        export CXXFLAGS="$SAN_FLAGS"
+        export LDFLAGS="$SAN_FLAGS"
+        ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
+          --prefix="$OPENSSL_PREFIX" \
+          --openssldir="$OPENSSL_PREFIX/ssl"
+        make -j"$(nproc)"
+        make install_sw

@@ -41,7 +41,7 @@ CTestTestfile.cmake
 _deps
 
 # Build directories
-build*/
+/build*/
 bin/
 out/
 .ninja_*

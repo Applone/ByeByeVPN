@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake ninja-build libssl-dev clang lld llvm
+          apt-get install -y cmake ninja-build libssl-dev zlib1g-dev libzstd-dev clang lld llvm
 
       - name: Configure CMake
         env:
@@ -56,11 +56,14 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Install OpenSSL
+        run: choco install openssl -y --no-progress
+
       - name: Configure CMake
         env:
           CC: clang
           CXX: clang++
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON -DOPENSSL_ROOT_DIR="C:/Program Files/OpenSSL-Win64"
 
       - name: Build
         run: cmake --build build --parallel
