@@ -132,6 +132,108 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
     exit 1
 fi
 
+# --- Container engine discovery ---
+CONTAINER_ENGINE=""
+if command -v podman &>/dev/null; then
+    CONTAINER_ENGINE="podman"
+elif command -v docker &>/dev/null; then
+    CONTAINER_ENGINE="docker"
+else
+    echo "ERROR: Neither podman nor docker is installed. Please install one of them." >&2
+    exit 1
+fi
+echo "Using container engine: $CONTAINER_ENGINE"
+
+# --- TUN interface check ---
+CONTAINER_NETWORK_ARGS=()
+if [ ! -e /dev/net/tun ]; then
+    echo "TUN interface not available, using --network=host for containers."
+    CONTAINER_NETWORK_ARGS+=(--network=host)
+fi
+
+# --- vcpkg setup ---
+if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
+    echo "Using existing vcpkg at: $VCPKG_ROOT"
+elif command -v vcpkg &>/dev/null; then
+    VCPKG_ROOT="$(dirname "$(command -v vcpkg)")"
+    if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+        # System package managers (dnf, apt) install vcpkg data to /usr/share/vcpkg
+        if [ -f "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            VCPKG_ROOT="/usr/share/vcpkg"
+        else
+            echo "ERROR: vcpkg binary found but cannot locate vcpkg root directory." >&2
+            echo "Please set the VCPKG_ROOT environment variable." >&2
+            exit 1
+        fi
+    fi
+    echo "Found vcpkg in PATH, using: $VCPKG_ROOT"
+else
+    VCPKG_ROOT="$(pwd)/deps/vcpkg"
+    if [ ! -f "$VCPKG_ROOT/vcpkg" ]; then
+        echo "vcpkg not found. It will be cloned and bootstrapped into $VCPKG_ROOT."
+        read -rp "Proceed with vcpkg installation? [y/N] " answer
+        if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+            echo "Aborted. Please install vcpkg manually or set VCPKG_ROOT." >&2
+            exit 1
+        fi
+        mkdir -p deps
+        git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+    else
+        echo "Using previously cloned vcpkg at: $VCPKG_ROOT"
+    fi
+fi
+export VCPKG_ROOT
+export VCPKG_FORCE_SYSTEM_BINARIES=1
+
+VCPKG_TOOLCHAIN="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+VCPKG_TRIPLET="x64-linux-static"
+OVERLAY_TRIPLETS="$(pwd)/triplets"
+
+# --- Check build prerequisites ---
+MISSING_DEPS=()
+
+if ! command -v perl &>/dev/null; then
+    MISSING_DEPS+=("perl")
+else
+    if ! perl -e 'use IPC::Cmd;' &>/dev/null; then
+        MISSING_DEPS+=("perl-IPC-Cmd (Fedora/RHEL) or libperl-dev (Debian/Ubuntu)")
+    fi
+    if ! perl -e 'use FindBin;' &>/dev/null; then
+        MISSING_DEPS+=("perl-FindBin (Fedora/RHEL)")
+    fi
+fi
+
+if [ ! -d /usr/include/linux ]; then
+    MISSING_DEPS+=("kernel-headers (Fedora/RHEL) or linux-libc-dev (Debian/Ubuntu)")
+fi
+
+if ! command -v make &>/dev/null; then
+    MISSING_DEPS+=("make")
+fi
+
+if ! command -v cmake &>/dev/null; then
+    MISSING_DEPS+=("cmake")
+fi
+
+if ! command -v ninja &>/dev/null; then
+    MISSING_DEPS+=("ninja-build")
+fi
+
+if ! command -v clang &>/dev/null; then
+    MISSING_DEPS+=("clang")
+fi
+
+if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+    echo "ERROR: The following system dependencies are missing:" >&2
+    for dep in "${MISSING_DEPS[@]}"; do
+        echo "  - $dep" >&2
+    done
+    echo "" >&2
+    echo "Please install them via your system package manager before running this script." >&2
+    exit 1
+fi
+
 # Config
 OPENSSL_VERSION="3.5.6"
 CONTAINER_IMAGE="localhost/helpers/sans:latest"
@@ -142,6 +244,9 @@ export CXX=clang++
 
 echo "Running static analysis..."
 cmake -S . -B build -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
     -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
     -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
     -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
@@ -164,6 +269,9 @@ cp build/byebyevpn staging/
 
 echo "Running coverage..."
 cmake -S . -B build-cov -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
     -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
     -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
     -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
