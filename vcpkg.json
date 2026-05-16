@@ -1,0 +1,9 @@
+{
+  "name": "byebyevpn",
+  "version-string": "0.0.0",
+  "dependencies": [
+    "openssl",
+    "zlib",
+    "zstd"
+  ]
+}

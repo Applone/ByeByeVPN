@@ -1,0 +1,10 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # vcpkg manifest (vcpkg.json) vulnerability scanning is provided
+  # automatically by GitHub's dependency graph and Dependabot alerts.
+  # No explicit package-ecosystem entry is needed for vcpkg security advisories.

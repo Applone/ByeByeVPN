@@ -14,13 +14,29 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:trixie
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: /root/vcpkg-cache
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake ninja-build libssl-dev zlib1g-dev libzstd-dev clang lld llvm
+          apt-get install -y cmake ninja-build clang lld llvm \
+            git curl zip unzip tar pkg-config
+
+      - name: Setup vcpkg
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git /opt/vcpkg
+          /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          mkdir -p $VCPKG_DEFAULT_BINARY_CACHE
+
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: /root/vcpkg-cache
+          key: vcpkg-debian-release-linux-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-debian-release-linux-
 
       - name: Configure CMake
         env:
@@ -28,6 +44,9 @@ jobs:
           CXX: clang++
         run: |
           cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-static \
+            -DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/triplets \
             -DCMAKE_BUILD_TYPE=Release \
             -DBYEBYEVPN_ENABLE_TESTS=ON \
             -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
@@ -53,26 +72,27 @@ jobs:
   release-build-windows:
     name: Release Build & Unit Tests (Windows)
     runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install OpenSSL
-        run: choco install openssl -y --no-progress
-
-      - name: Locate OpenSSL
-        id: openssl
+      - name: Setup vcpkg cache directory
         shell: pwsh
-        run: |
-          $dir = (Get-ChildItem "C:\Program Files\OpenSSL*" -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
-          if (-not $dir) { throw "OpenSSL installation directory not found" }
-          Write-Host "Found OpenSSL at: $dir"
-          echo "root=$dir" >> $env:GITHUB_OUTPUT
+        run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\vcpkg-cache"
+
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-cache
+          key: vcpkg-windows-release-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-windows-release-
 
       - name: Configure CMake
         env:
           CC: clang
           CXX: clang++
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON -DOPENSSL_ROOT_DIR="${{ steps.openssl.outputs.root }}"
+        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --parallel

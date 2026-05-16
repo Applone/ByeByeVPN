@@ -47,6 +47,10 @@ out/
 .ninja_*
 *.ninja
 
+# vcpkg
+vcpkg_installed/
+/deps/
+
 # IDE / OS
 .vscode/
 .idea/

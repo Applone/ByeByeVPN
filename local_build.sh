@@ -22,7 +22,7 @@ cleanup() {
         echo "Skipping cleanup (--keep flag provided)."
         return 0
     fi
-    
+
     echo "Cleaning up build artifacts..."
     rm -rf build staging build-cov coverage.info coverage-html \
            deps build-asan-ubsan build-tsan build-msan
@@ -30,9 +30,111 @@ cleanup() {
 
 trap cleanup EXIT
 
+# --- Container engine discovery ---
+CONTAINER_ENGINE=""
+if command -v podman &>/dev/null; then
+    CONTAINER_ENGINE="podman"
+elif command -v docker &>/dev/null; then
+    CONTAINER_ENGINE="docker"
+else
+    echo "ERROR: Neither podman nor docker is installed. Please install one of them." >&2
+    exit 1
+fi
+echo "Using container engine: $CONTAINER_ENGINE"
+
+# --- TUN interface check ---
+CONTAINER_NETWORK_ARGS=()
+if [ ! -e /dev/net/tun ]; then
+    echo "TUN interface not available, using --network=host for containers."
+    CONTAINER_NETWORK_ARGS+=(--network=host)
+fi
+
+# --- vcpkg setup ---
+if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
+    echo "Using existing vcpkg at: $VCPKG_ROOT"
+elif command -v vcpkg &>/dev/null; then
+    VCPKG_ROOT="$(dirname "$(command -v vcpkg)")"
+    if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+        # System package managers (dnf, apt) install vcpkg data to /usr/share/vcpkg
+        if [ -f "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            VCPKG_ROOT="/usr/share/vcpkg"
+        else
+            echo "ERROR: vcpkg binary found but cannot locate vcpkg root directory." >&2
+            echo "Please set the VCPKG_ROOT environment variable." >&2
+            exit 1
+        fi
+    fi
+    echo "Found vcpkg in PATH, using: $VCPKG_ROOT"
+else
+    VCPKG_ROOT="$(pwd)/deps/vcpkg"
+    if [ ! -f "$VCPKG_ROOT/vcpkg" ]; then
+        echo "vcpkg not found. It will be cloned and bootstrapped into $VCPKG_ROOT."
+        read -rp "Proceed with vcpkg installation? [y/N] " answer
+        if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+            echo "Aborted. Please install vcpkg manually or set VCPKG_ROOT." >&2
+            exit 1
+        fi
+        mkdir -p deps
+        git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+    else
+        echo "Using previously cloned vcpkg at: $VCPKG_ROOT"
+    fi
+fi
+export VCPKG_ROOT
+export VCPKG_FORCE_SYSTEM_BINARIES=1
+
+VCPKG_TOOLCHAIN="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+VCPKG_TRIPLET="x64-linux-static"
+OVERLAY_TRIPLETS="$(pwd)/triplets"
+
+# --- Check build prerequisites ---
+MISSING_DEPS=()
+
+if ! command -v perl &>/dev/null; then
+    MISSING_DEPS+=("perl")
+else
+    if ! perl -e 'use IPC::Cmd;' &>/dev/null; then
+        MISSING_DEPS+=("perl-IPC-Cmd (Fedora/RHEL) or libperl-dev (Debian/Ubuntu)")
+    fi
+    if ! perl -e 'use FindBin;' &>/dev/null; then
+        MISSING_DEPS+=("perl-FindBin (Fedora/RHEL)")
+    fi
+fi
+
+if [ ! -d /usr/include/linux ]; then
+    MISSING_DEPS+=("kernel-headers (Fedora/RHEL) or linux-libc-dev (Debian/Ubuntu)")
+fi
+
+if ! command -v make &>/dev/null; then
+    MISSING_DEPS+=("make")
+fi
+
+if ! command -v cmake &>/dev/null; then
+    MISSING_DEPS+=("cmake")
+fi
+
+if ! command -v ninja &>/dev/null; then
+    MISSING_DEPS+=("ninja-build")
+fi
+
+if ! command -v clang &>/dev/null; then
+    MISSING_DEPS+=("clang")
+fi
+
+if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+    echo "ERROR: The following system dependencies are missing:" >&2
+    for dep in "${MISSING_DEPS[@]}"; do
+        echo "  - $dep" >&2
+    done
+    echo "" >&2
+    echo "Please install them via your system package manager before running this script." >&2
+    exit 1
+fi
+
 # Config
-OPENSSL_VERSION="3.3.2"
-PODMAN_IMAGE="localhost/helpers/sans:latest"
+OPENSSL_VERSION="3.5.6"
+CONTAINER_IMAGE="localhost/helpers/sans:latest"
 STATIC_FLAG="-DBYEBYEVPN_STATIC=OFF"
 
 export CC=clang
@@ -40,6 +142,9 @@ export CXX=clang++
 
 echo "Running static analysis..."
 cmake -S . -B build -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
     -DCMAKE_BUILD_TYPE=Debug \
     -DBYEBYEVPN_ENABLE_TESTS=OFF \
     -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
@@ -59,6 +164,9 @@ cp build/byebyevpn staging/
 
 echo "Running coverage..."
 cmake -S . -B build-cov -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
     -DCMAKE_BUILD_TYPE=Debug \
     -DBYEBYEVPN_ENABLE_TESTS=ON \
     -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
@@ -85,10 +193,12 @@ llvm-cov show \
     -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
     build-cov/tests/byebyevpn_tests
 
-echo "Running sanitizers via Podman..."
+echo "Running sanitizers via $CONTAINER_ENGINE..."
 for SAN in asan-ubsan tsan msan; do
     echo "Running ${SAN}..."
-    podman run -i --rm --network=host --privileged -v "$(pwd):/workspace" -w /workspace "$PODMAN_IMAGE" bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
+    $CONTAINER_ENGINE run -i --rm "${CONTAINER_NETWORK_ARGS[@]}" --privileged \
+        -v "$(pwd):/workspace" -w /workspace "$CONTAINER_IMAGE" \
+        bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
 set -euo pipefail
 
 SAN=$1
@@ -152,7 +262,10 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_CXX_FLAGS="${SAN_FLAGS} -stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
     -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS} -stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
 
-cmake --build "$BUILD_DIR" --parallel
+# MSan/ASan/TSan inflate memory 3-5x per TU; cap parallelism to avoid OOM crashes
+PARALLEL_JOBS=$(( $(nproc) / 2 ))
+[ "$PARALLEL_JOBS" -lt 1 ] && PARALLEL_JOBS=1
+cmake --build "$BUILD_DIR" --parallel "$PARALLEL_JOBS"
 
 export LD_LIBRARY_PATH="${LIBCXX_ROOT}/lib:${LD_LIBRARY_PATH:-}"
 ctest --test-dir "$BUILD_DIR" --output-on-failure
