@@ -107,13 +107,11 @@ void set_port(sockaddr_storage& addr, int port) {
     }
 }
 
+#ifndef _WIN32
 bool is_connect_in_progress_error(int err) {
-#ifdef _WIN32
-    return err == WSAEWOULDBLOCK || err == WSAEINPROGRESS || err == WSAEALREADY;
-#else
     return err == EINPROGRESS || err == EALREADY || err == EWOULDBLOCK;
-#endif
 }
+#endif
 
 bool is_refused_error(int err) {
 #ifdef _WIN32
@@ -179,12 +177,14 @@ private:
     bool stop_ = false;
 };
 
+#ifndef _WIN32
 void close_active_sockets(std::unordered_map<SOCKET, PendingConnect>& active) {
     for (auto& [sock, _] : active) {
         if (sock != INVALID_SOCKET) closesocket(sock);
     }
     active.clear();
 }
+#endif
 
 #ifndef _WIN32
 WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
