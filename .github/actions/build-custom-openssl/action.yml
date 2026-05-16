@@ -54,6 +54,7 @@ runs:
         export LDFLAGS="$SAN_FLAGS"
         ./Configure linux-x86_64 no-shared no-tests no-module no-asm \
           --prefix="$OPENSSL_PREFIX" \
-          --openssldir="$OPENSSL_PREFIX/ssl"
+          --openssldir="$OPENSSL_PREFIX/ssl" \
+          --libdir=lib
         make -j"$(nproc)"
         make install_sw

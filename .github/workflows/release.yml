@@ -59,11 +59,20 @@ jobs:
       - name: Install OpenSSL
         run: choco install openssl -y --no-progress
 
+      - name: Locate OpenSSL
+        id: openssl
+        shell: pwsh
+        run: |
+          $dir = (Get-ChildItem "C:\Program Files\OpenSSL*" -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          if (-not $dir) { throw "OpenSSL installation directory not found" }
+          Write-Host "Found OpenSSL at: $dir"
+          echo "root=$dir" >> $env:GITHUB_OUTPUT
+
       - name: Configure CMake
         env:
           CC: clang
           CXX: clang++
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON -DOPENSSL_ROOT_DIR="C:/Program Files/OpenSSL-Win64"
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON -DOPENSSL_ROOT_DIR="${{ steps.openssl.outputs.root }}"
 
       - name: Build
         run: cmake --build build --parallel
