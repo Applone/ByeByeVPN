@@ -55,9 +55,19 @@ Resolved resolve_host(const std::string& host) {
     int rc = getaddrinfo(host.c_str(), nullptr, &hints, &ai);
     std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> ai_ptr(ai, freeaddrinfo);
 #ifdef _WIN32
-    if (rc != 0) { r.ms = elapsed_ms(); r.err = gai_strerrorA(rc); return r; }
+    if (rc != 0) { 
+        r.ms = elapsed_ms(); 
+        const char* err_str = gai_strerrorA(rc);
+        r.err = (err_str && err_str[0]) ? err_str : ("error " + std::to_string(rc)); 
+        return r; 
+    }
 #else
-    if (rc != 0) { r.ms = elapsed_ms(); r.err = gai_strerror(rc); return r; }
+    if (rc != 0) { 
+        r.ms = elapsed_ms(); 
+        const char* err_str = gai_strerror(rc);
+        r.err = (err_str && err_str[0]) ? err_str : ("error " + std::to_string(rc)); 
+        return r; 
+    }
 #endif
     
     std::vector<std::string> v4_ips, v6_ips;

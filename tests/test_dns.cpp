@@ -55,6 +55,7 @@ TEST_CASE("resolve_host preserves host field") {
 
 TEST_CASE("resolve_host nonexistent domain") {
     const auto r = resolve_host("this-domain-does-not-exist-xyz123.invalid");
+    INFO("r.err was: '" << r.err << "'");
     REQUIRE_FALSE(r.err.empty());
     REQUIRE(r.ips.empty());
 }

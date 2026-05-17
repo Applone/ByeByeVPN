@@ -7,6 +7,16 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+static FILE* test_tmpfile() {
+    return std::fopen("test_tmpfile.txt", "w+b");
+}
+#else
+static FILE* test_tmpfile() {
+    return std::tmpfile();
+}
+#endif
+
 void save_write_stripped(const char* s, size_t n);
 
 namespace {
@@ -206,7 +216,7 @@ TEST_CASE("tee_printf returns 0 for empty format string") {
 
 TEST_CASE("tee_printf writes formatted output to save file") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -220,7 +230,7 @@ TEST_CASE("tee_printf writes formatted output to save file") {
 
 TEST_CASE("tee_printf strips ANSI escapes when saving") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -233,7 +243,7 @@ TEST_CASE("tee_printf strips ANSI escapes when saving") {
 
 TEST_CASE("tee_printf handles output larger than internal buffer") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -254,7 +264,7 @@ TEST_CASE("tee_puts returns 0 for null input") {
 
 TEST_CASE("tee_puts writes string and newline to save file") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -267,7 +277,7 @@ TEST_CASE("tee_puts writes string and newline to save file") {
 
 TEST_CASE("tee_puts strips ANSI escapes when saving") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -287,7 +297,7 @@ TEST_CASE("save_write_stripped is a noop when save_fp is null") {
 
 TEST_CASE("save_write_stripped is a noop for null buffer or zero length") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -301,7 +311,7 @@ TEST_CASE("save_write_stripped is a noop for null buffer or zero length") {
 
 TEST_CASE("save_write_stripped removes incomplete trailing escape") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 
@@ -315,7 +325,7 @@ TEST_CASE("save_write_stripped removes incomplete trailing escape") {
 
 TEST_CASE("banner writes content to save file") {
     SaveFpGuard guard;
-    FILE* fp = std::tmpfile();
+    FILE* fp = test_tmpfile();
     REQUIRE(fp != nullptr);
     g_save_fp = fp;
 

@@ -1,7 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
+# ANSI color codes
+RESET="\033[0m"
+BOLD="\033[1m"
+GREEN="\033[32m"
+RED="\033[31m"
+CYAN="\033[36m"
+YELLOW="\033[33m"
+
 KEEP_ARTIFACTS=0
+BUILD_LINUX=1
+BUILD_WINDOWS=1
+EXPLICIT_BUILD_TARGET=0
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -9,9 +20,25 @@ while [ $# -gt 0 ]; do
         KEEP_ARTIFACTS=1
         shift
         ;;
+        --linux)
+        if [ "$EXPLICIT_BUILD_TARGET" -eq 0 ]; then
+            BUILD_WINDOWS=0
+            EXPLICIT_BUILD_TARGET=1
+        fi
+        BUILD_LINUX=1
+        shift
+        ;;
+        --windows)
+        if [ "$EXPLICIT_BUILD_TARGET" -eq 0 ]; then
+            BUILD_LINUX=0
+            EXPLICIT_BUILD_TARGET=1
+        fi
+        BUILD_WINDOWS=1
+        shift
+        ;;
         *)
-        echo "Unknown option: $1" >&2
-        echo "Usage: $0 [--keep]" >&2
+        echo -e "${RED}Unknown option: $1${RESET}" >&2
+        echo -e "Usage: $0 [--keep] [--linux] [--windows]" >&2
         exit 2
         ;;
     esac
@@ -19,13 +46,13 @@ done
 
 cleanup() {
     if [ "$KEEP_ARTIFACTS" -eq 1 ]; then
-        echo "Skipping cleanup (--keep flag provided)."
+        echo -e "${YELLOW}Skipping cleanup (--keep flag provided).${RESET}"
         return 0
     fi
 
-    echo "Cleaning up build artifacts..."
+    echo -e "${CYAN}Cleaning up build artifacts...${RESET}"
     rm -rf build staging build-cov coverage.info coverage-html \
-           deps build-asan-ubsan build-tsan build-msan
+           deps build-asan-ubsan build-tsan build-msan build-win
 }
 
 trap cleanup EXIT
@@ -37,48 +64,47 @@ if command -v podman &>/dev/null; then
 elif command -v docker &>/dev/null; then
     CONTAINER_ENGINE="docker"
 else
-    echo "ERROR: Neither podman nor docker is installed. Please install one of them." >&2
+    echo -e "${RED}ERROR: Neither podman nor docker is installed. Please install one of them.${RESET}" >&2
     exit 1
 fi
-echo "Using container engine: $CONTAINER_ENGINE"
+echo -e "${GREEN}Using container engine: $CONTAINER_ENGINE${RESET}"
 
 # --- TUN interface check ---
 CONTAINER_NETWORK_ARGS=()
 if [ ! -e /dev/net/tun ]; then
-    echo "TUN interface not available, using --network=host for containers."
+    echo -e "${YELLOW}TUN interface not available, using --network=host for containers.${RESET}"
     CONTAINER_NETWORK_ARGS+=(--network=host)
 fi
 
 # --- vcpkg setup ---
 if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
-    echo "Using existing vcpkg at: $VCPKG_ROOT"
+    echo -e "${GREEN}Using existing vcpkg at: $VCPKG_ROOT${RESET}"
 elif command -v vcpkg &>/dev/null; then
     VCPKG_ROOT="$(dirname "$(command -v vcpkg)")"
     if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-        # System package managers (dnf, apt) install vcpkg data to /usr/share/vcpkg
         if [ -f "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
             VCPKG_ROOT="/usr/share/vcpkg"
         else
-            echo "ERROR: vcpkg binary found but cannot locate vcpkg root directory." >&2
-            echo "Please set the VCPKG_ROOT environment variable." >&2
+            echo -e "${RED}ERROR: vcpkg binary found but cannot locate vcpkg root directory.${RESET}" >&2
+            echo -e "${RED}Please set the VCPKG_ROOT environment variable.${RESET}" >&2
             exit 1
         fi
     fi
-    echo "Found vcpkg in PATH, using: $VCPKG_ROOT"
+    echo -e "${GREEN}Found vcpkg in PATH, using: $VCPKG_ROOT${RESET}"
 else
     VCPKG_ROOT="$(pwd)/deps/vcpkg"
     if [ ! -f "$VCPKG_ROOT/vcpkg" ]; then
-        echo "vcpkg not found. It will be cloned and bootstrapped into $VCPKG_ROOT."
-        read -rp "Proceed with vcpkg installation? [y/N] " answer
+        echo -e "${YELLOW}vcpkg not found. It will be cloned and bootstrapped into $VCPKG_ROOT.${RESET}"
+        read -rp "Proceed with vcpkg installation? [y/N] " answer </dev/tty
         if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-            echo "Aborted. Please install vcpkg manually or set VCPKG_ROOT." >&2
+            echo -e "${RED}Aborted. Please install vcpkg manually or set VCPKG_ROOT.${RESET}" >&2
             exit 1
         fi
         mkdir -p deps
         git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
         "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
     else
-        echo "Using previously cloned vcpkg at: $VCPKG_ROOT"
+        echo -e "${GREEN}Using previously cloned vcpkg at: $VCPKG_ROOT${RESET}"
     fi
 fi
 export VCPKG_ROOT
@@ -122,115 +148,19 @@ if ! command -v clang &>/dev/null; then
     MISSING_DEPS+=("clang")
 fi
 
-if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-    echo "ERROR: The following system dependencies are missing:" >&2
-    for dep in "${MISSING_DEPS[@]}"; do
-        echo "  - $dep" >&2
-    done
-    echo "" >&2
-    echo "Please install them via your system package manager before running this script." >&2
-    exit 1
-fi
-
-# --- Container engine discovery ---
-CONTAINER_ENGINE=""
-if command -v podman &>/dev/null; then
-    CONTAINER_ENGINE="podman"
-elif command -v docker &>/dev/null; then
-    CONTAINER_ENGINE="docker"
-else
-    echo "ERROR: Neither podman nor docker is installed. Please install one of them." >&2
-    exit 1
-fi
-echo "Using container engine: $CONTAINER_ENGINE"
-
-# --- TUN interface check ---
-CONTAINER_NETWORK_ARGS=()
-if [ ! -e /dev/net/tun ]; then
-    echo "TUN interface not available, using --network=host for containers."
-    CONTAINER_NETWORK_ARGS+=(--network=host)
-fi
-
-# --- vcpkg setup ---
-if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
-    echo "Using existing vcpkg at: $VCPKG_ROOT"
-elif command -v vcpkg &>/dev/null; then
-    VCPKG_ROOT="$(dirname "$(command -v vcpkg)")"
-    if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-        # System package managers (dnf, apt) install vcpkg data to /usr/share/vcpkg
-        if [ -f "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
-            VCPKG_ROOT="/usr/share/vcpkg"
-        else
-            echo "ERROR: vcpkg binary found but cannot locate vcpkg root directory." >&2
-            echo "Please set the VCPKG_ROOT environment variable." >&2
-            exit 1
-        fi
+if [ "$BUILD_WINDOWS" -eq 1 ]; then
+    if ! command -v x86_64-w64-mingw32-g++ &>/dev/null; then
+        MISSING_DEPS+=("x86_64-w64-mingw32-g++ (mingw-w64-gcc-c++)")
     fi
-    echo "Found vcpkg in PATH, using: $VCPKG_ROOT"
-else
-    VCPKG_ROOT="$(pwd)/deps/vcpkg"
-    if [ ! -f "$VCPKG_ROOT/vcpkg" ]; then
-        echo "vcpkg not found. It will be cloned and bootstrapped into $VCPKG_ROOT."
-        read -rp "Proceed with vcpkg installation? [y/N] " answer
-        if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-            echo "Aborted. Please install vcpkg manually or set VCPKG_ROOT." >&2
-            exit 1
-        fi
-        mkdir -p deps
-        git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
-        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-    else
-        echo "Using previously cloned vcpkg at: $VCPKG_ROOT"
-    fi
-fi
-export VCPKG_ROOT
-export VCPKG_FORCE_SYSTEM_BINARIES=1
-
-VCPKG_TOOLCHAIN="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-VCPKG_TRIPLET="x64-linux-static"
-OVERLAY_TRIPLETS="$(pwd)/triplets"
-
-# --- Check build prerequisites ---
-MISSING_DEPS=()
-
-if ! command -v perl &>/dev/null; then
-    MISSING_DEPS+=("perl")
-else
-    if ! perl -e 'use IPC::Cmd;' &>/dev/null; then
-        MISSING_DEPS+=("perl-IPC-Cmd (Fedora/RHEL) or libperl-dev (Debian/Ubuntu)")
-    fi
-    if ! perl -e 'use FindBin;' &>/dev/null; then
-        MISSING_DEPS+=("perl-FindBin (Fedora/RHEL)")
-    fi
-fi
-
-if [ ! -d /usr/include/linux ]; then
-    MISSING_DEPS+=("kernel-headers (Fedora/RHEL) or linux-libc-dev (Debian/Ubuntu)")
-fi
-
-if ! command -v make &>/dev/null; then
-    MISSING_DEPS+=("make")
-fi
-
-if ! command -v cmake &>/dev/null; then
-    MISSING_DEPS+=("cmake")
-fi
-
-if ! command -v ninja &>/dev/null; then
-    MISSING_DEPS+=("ninja-build")
-fi
-
-if ! command -v clang &>/dev/null; then
-    MISSING_DEPS+=("clang")
 fi
 
 if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-    echo "ERROR: The following system dependencies are missing:" >&2
+    echo -e "${RED}ERROR: The following system dependencies are missing:${RESET}" >&2
     for dep in "${MISSING_DEPS[@]}"; do
-        echo "  - $dep" >&2
+        echo -e "  - ${YELLOW}$dep${RESET}" >&2
     done
     echo "" >&2
-    echo "Please install them via your system package manager before running this script." >&2
+    echo -e "${RED}Please install them via your system package manager before running this script.${RESET}" >&2
     exit 1
 fi
 
@@ -242,71 +172,70 @@ STATIC_FLAG="-DBYEBYEVPN_STATIC=OFF"
 export CC=clang
 export CXX=clang++
 
-echo "Running static analysis..."
-cmake -S . -B build -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
-    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
-    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
-    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
-    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
-    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DBYEBYEVPN_ENABLE_TESTS=OFF \
-    -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
-    "$STATIC_FLAG"
+if [ "$BUILD_LINUX" -eq 1 ]; then
+    echo -e "\n${BOLD}${CYAN}==============================================${RESET}"
+    echo -e "${BOLD}${CYAN}   Starting Linux Build & Test Phase          ${RESET}"
+    echo -e "${BOLD}${CYAN}==============================================${RESET}\n"
 
-cppcheck --std=c++20 --enable=warning,style,performance,portability \
-    --error-exitcode=1 --inline-suppr --quiet src
+    echo -e "${CYAN}Running static analysis...${RESET}"
+    cmake -S . -B build -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+        -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+        -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DBYEBYEVPN_ENABLE_TESTS=OFF \
+        -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
+        "$STATIC_FLAG"
 
-# Run clang-tidy on cpp files (NUL-delimited to handle paths with whitespace)
-find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build \
-    --checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*'
+    cppcheck --std=c++20 --enable=warning,style,performance,portability \
+        --error-exitcode=1 --inline-suppr --quiet src
 
-echo "Building debug artifacts..."
-cmake --build build --parallel
-mkdir -p staging
-cp build/byebyevpn staging/
+    # Run clang-tidy on cpp files (NUL-delimited to handle paths with whitespace)
+    find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build \
+        --checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*'
 
-echo "Running coverage..."
-cmake -S . -B build-cov -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
-    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
-    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
-    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
-    -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
-    -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DBYEBYEVPN_ENABLE_TESTS=ON \
-    -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
-    -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
-    -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate" \
-    "$STATIC_FLAG"
+    echo -e "${CYAN}Building debug artifacts...${RESET}"
+    cmake --build build --parallel
+    mkdir -p staging
+    cp build/byebyevpn staging/
 
-cmake --build build-cov --parallel
+    echo -e "${CYAN}Running coverage...${RESET}"
+    cmake -S . -B build-cov -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+        -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
+        -DVCPKG_OVERLAY_TRIPLETS="$OVERLAY_TRIPLETS" \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DBYEBYEVPN_ENABLE_TESTS=ON \
+        -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
+        -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+        -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate" \
+        "$STATIC_FLAG"
 
-mkdir -p build-cov/profiles
-export LLVM_PROFILE_FILE="$(pwd)/build-cov/profiles/byebyevpn_tests-%p.profraw"
-ctest --test-dir build-cov --output-on-failure
+    cmake --build build-cov --parallel
 
-llvm-profdata merge -sparse build-cov/profiles/*.profraw -o build-cov/coverage.profdata
-llvm-cov export -format=lcov \
-    -instr-profile=build-cov/coverage.profdata \
-    -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
-    build-cov/tests/byebyevpn_tests > coverage.info
+    mkdir -p build-cov/profiles
+    export LLVM_PROFILE_FILE="$(pwd)/build-cov/profiles/byebyevpn_tests-%p.profraw"
+    ctest --test-dir build-cov --output-on-failure
 
-llvm-cov show \
-    -format=html \
-    -output-dir=coverage-html \
-    -instr-profile=build-cov/coverage.profdata \
-    -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
-    build-cov/tests/byebyevpn_tests
+    llvm-profdata merge -sparse build-cov/profiles/*.profraw -o build-cov/coverage.profdata
+    llvm-cov export -format=lcov \
+        -instr-profile=build-cov/coverage.profdata \
+        -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
+        build-cov/tests/byebyevpn_tests > coverage.info
 
-echo "Running sanitizers via $CONTAINER_ENGINE..."
-for SAN in asan-ubsan tsan msan; do
-    echo "Running ${SAN}..."
-    $CONTAINER_ENGINE run -i --rm "${CONTAINER_NETWORK_ARGS[@]}" --privileged \
-        -v "$(pwd):/workspace" -w /workspace "$CONTAINER_IMAGE" \
-        bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
+    llvm-cov show \
+        -format=html \
+        -output-dir=coverage-html \
+        -instr-profile=build-cov/coverage.profdata \
+        -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
+        build-cov/tests/byebyevpn_tests
+
+    echo -e "${CYAN}Running sanitizers via $CONTAINER_ENGINE...${RESET}"
+    for SAN in asan-ubsan tsan msan; do
+        echo -e "${CYAN}Running ${SAN}...${RESET}"
+        $CONTAINER_ENGINE run -i --rm "${CONTAINER_NETWORK_ARGS[@]}" --privileged \
+            -v "$(pwd):/workspace" -w /workspace "$CONTAINER_IMAGE" \
+            bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
 set -euo pipefail
 
 SAN=$1
@@ -379,6 +308,74 @@ export LD_LIBRARY_PATH="${LIBCXX_ROOT}/lib:${LD_LIBRARY_PATH:-}"
 ctest --test-dir "$BUILD_DIR" --output-on-failure
 EOF
 
-done
+    done
+    echo -e "${GREEN}Linux phase finished successfully.${RESET}"
+fi
 
-echo "Local CI run finished successfully."
+if [ "$BUILD_WINDOWS" -eq 1 ]; then
+    echo -e "\n${BOLD}${CYAN}==============================================${RESET}"
+    echo -e "${BOLD}${CYAN}   Starting Windows Build & Test Phase        ${RESET}"
+    echo -e "${BOLD}${CYAN}==============================================${RESET}\n"
+
+    echo -e "${CYAN}Building Windows artifacts...${RESET}"
+    cmake -S . -B build-win -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
+        -DVCPKG_TARGET_TRIPLET="x64-mingw-static" \
+        -DCMAKE_SYSTEM_NAME=Windows \
+        -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+        -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+        -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+        -DCMAKE_EXE_LINKER_FLAGS="-static" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBYEBYEVPN_ENABLE_TESTS=ON \
+        -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
+        "$STATIC_FLAG"
+
+    cmake --build build-win --parallel
+
+    mkdir -p staging/windows-Release
+    if [ -f build-win/byebyevpn.exe ]; then
+        cp build-win/byebyevpn.exe staging/windows-Release/
+    fi
+
+    echo -e "${CYAN}Running Windows tests...${RESET}"
+    
+    TEST_CMD=""
+    RUN_TESTS=1
+    
+    # Check for WSL
+    if grep -qi "microsoft" /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+        echo -e "${YELLOW}WSL environment detected.${RESET}"
+        read -rp "Is it okay to proceed and run unit tests directly? (y/n) " answer </dev/tty
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            TEST_CMD=""
+        else
+            echo -e "${YELLOW}Skipping native execution. Checking for wine...${RESET}"
+            if command -v wine &>/dev/null; then
+                TEST_CMD="wine"
+            else
+                echo -e "${YELLOW}Wine not found. Skipping Windows tests.${RESET}"
+                RUN_TESTS=0
+            fi
+        fi
+    else
+        if command -v wine &>/dev/null; then
+            TEST_CMD="wine"
+        else
+            echo -e "${YELLOW}Wine not found. Skipping Windows tests.${RESET}"
+            RUN_TESTS=0
+        fi
+    fi
+
+    if [ "$RUN_TESTS" -eq 1 ]; then
+        echo -e "${CYAN}Executing Windows tests with: ${TEST_CMD:-native}${RESET}"
+        if [ -n "$TEST_CMD" ]; then
+            $TEST_CMD build-win/tests/byebyevpn_tests.exe
+        else
+            build-win/tests/byebyevpn_tests.exe
+        fi
+        echo -e "${GREEN}Windows tests passed successfully.${RESET}"
+    fi
+fi
+
+echo -e "\n${BOLD}${GREEN}Local CI run finished successfully.${RESET}"

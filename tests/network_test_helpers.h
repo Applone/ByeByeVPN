@@ -120,6 +120,7 @@ public:
                 socklen_t plen = sizeof(peer);
                 SOCKET client = accept(listen_sock_, reinterpret_cast<sockaddr*>(&peer), &plen);
                 if (client != INVALID_SOCKET) {
+                    set_nonblocking(client, false);
                     handler_(client);
                     closesocket(client);
                     return;

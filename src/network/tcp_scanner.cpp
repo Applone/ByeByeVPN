@@ -39,18 +39,24 @@ SOCKET tcp_connect(const std::string& host, int port, int timeout_ms, std::strin
             fd_set wr, ex; FD_ZERO(&wr); FD_SET(s, &wr); FD_ZERO(&ex); FD_SET(s, &ex);
             timeval tv{}; tv.tv_sec = timeout_ms/1000; tv.tv_usec = (timeout_ms%1000)*1000;
             int sr = select((int)s + 1, nullptr, &wr, &ex, &tv);
-            if (sr > 0 && FD_ISSET(s, &wr)) {
-                int se = 0; socklen_t sl = sizeof(se);
-                getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&se), &sl);
-                if (se == 0) { 
+            if (sr > 0) {
+                if (FD_ISSET(s, &ex)) {
+                    int se = 0; socklen_t sl = sizeof(se);
+                    getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&se), &sl);
+                    if (se == WSAECONNREFUSED || se == ECONNREFUSED) saw_refused = true;
+                } else if (FD_ISSET(s, &wr)) {
+                    int se = 0; socklen_t sl = sizeof(se);
+                    getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&se), &sl);
+                    if (se == 0) { 
 #ifdef _WIN32
-                    u_long bl=0; ioctlsocket(s,FIONBIO,&bl); 
+                        u_long bl=0; ioctlsocket(s,FIONBIO,&bl); 
 #else
-                    set_nonblocking(s, false);
+                        set_nonblocking(s, false);
 #endif
-                    break; 
+                        break; 
+                    }
+                    if (se == WSAECONNREFUSED || se == ECONNREFUSED) saw_refused = true;
                 }
-                if (se == WSAECONNREFUSED) saw_refused = true;
             } else if (sr == 0) {
                 saw_timeout = true;
             }
