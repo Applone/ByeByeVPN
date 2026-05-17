@@ -126,6 +126,9 @@ else
     if ! perl -e 'use FindBin;' &>/dev/null; then
         MISSING_DEPS+=("perl-FindBin (Fedora/RHEL)")
     fi
+    if ! perl -e 'use File::Compare;' &>/dev/null; then
+        MISSING_DEPS+=("perl-File-Compare (Fedora/RHEL)")
+    fi
 fi
 
 if [ ! -d /usr/include/linux ]; then
