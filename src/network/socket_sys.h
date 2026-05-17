@@ -5,6 +5,31 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+
+namespace socket_sys_detail {
+
+class WinsockRuntime {
+public:
+    WinsockRuntime() noexcept : rc_(WSAStartup(MAKEWORD(2, 2), &ws_)) {}
+
+    ~WinsockRuntime() {
+        if (rc_ == 0) WSACleanup();
+    }
+
+    bool ready() const noexcept { return rc_ == 0; }
+
+private:
+    WSADATA ws_{};
+    int rc_ = 0;
+};
+
+[[maybe_unused]] inline const WinsockRuntime g_winsock_runtime{};
+
+} // namespace socket_sys_detail
+
+inline bool socket_runtime_ready() noexcept {
+    return socket_sys_detail::g_winsock_runtime.ready();
+}
 #else
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -27,6 +52,8 @@ inline int WSAGetLastError() { return errno; }
 #define WSAECONNRESET ECONNRESET
 
 inline void Sleep(int ms) { usleep(ms * 1000); }
+
+inline bool socket_runtime_ready() noexcept { return true; }
 #endif
 
 inline void set_nonblocking(SOCKET s, bool nb) {

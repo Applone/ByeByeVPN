@@ -47,9 +47,6 @@ public:
             g_save_fp = nullptr;
         }
         openssl_runtime_cleanup();
-#ifdef _WIN32
-        WSACleanup();
-#endif
         fflush(stdout);
         fflush(stderr);
     }
@@ -442,15 +439,11 @@ int main_impl(int argc, char** argv) {
         return 2;
     }
 
-#ifdef _WIN32
-    WSADATA ws{};
-    const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &ws);
-    if (wsa_rc != 0) {
-        fprintf(stderr, "fatal: WSAStartup failed: %d\n", wsa_rc);
+    if (!socket_runtime_ready()) {
+        fprintf(stderr, "fatal: socket runtime initialization failed\n");
         fflush(stderr);
         return 2;
     }
-#endif
 
     Cleanup cleanup_guard;
 
