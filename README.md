@@ -7,7 +7,7 @@
 | |_) | |_| |  __/ |_) | |_| |  __/\ V / |  __/| |\  |
 |____/ \__, |\___|____/ \__, |\___| \_/  |_|   |_| \_|
        |___/            |___/                          
-   Remote signature-less VPN profiler   v1.1.0
+   Remote signature-less VPN profiler   v1.1.1
 ```
 
 **Discussion / report issues:**

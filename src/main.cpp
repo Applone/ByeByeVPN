@@ -572,7 +572,7 @@ int main_impl(int argc, char** argv) {
                         lt->tm_hour, lt->tm_min, lt->tm_sec);
             }
             if (!target.empty()) fprintf(g_save_fp, "**Target:** `%s`  \n", target.c_str());
-            fprintf(g_save_fp, "**Scanner version:** v1.1.0  \n\n");
+            fprintf(g_save_fp, "**Scanner version:** v1.1.1  \n\n");
             fprintf(g_save_fp, "```\n");
         }
     }
