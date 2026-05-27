@@ -1,11 +1,13 @@
-#ifndef NETWORK_VPN_PROBES_H
-#define NETWORK_VPN_PROBES_H
+#pragma once
+
+#include "udp_scanner.h"
 
 #include <cstddef>
 #include <string>
-#include "udp_scanner.h"
+#include <string_view>
 
-UdpResult wireguard_probe(const std::string& host, int port);
-UdpResult amneziawg_probe(const std::string& host, int port, std::size_t junk_prefix_len = 8);
+// WireGuard handshake probe (standard format)
+[[nodiscard]] UdpResult wireguard_probe(std::string_view host, int port);
 
-#endif // NETWORK_VPN_PROBES_H
+// AmneziaWG handshake probe (obfuscated format with junk prefix)
+[[nodiscard]] UdpResult amneziawg_probe(std::string_view host, int port, std::size_t junk_prefix_len = 8);

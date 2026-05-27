@@ -1,9 +1,9 @@
-#ifndef CLI_ORCHESTRATOR_H
-#define CLI_ORCHESTRATOR_H
+#pragma once
 
 #include <string>
+#include <string_view>
+
 #include "../analysis/verdict.h"
 
-FullReport run_full_target(const std::string& target);
-
-#endif // CLI_ORCHESTRATOR_H
+// Run full VPN detection analysis on a target
+[[nodiscard]] FullReport run_full_target(std::string_view target);

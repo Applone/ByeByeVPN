@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 project(ByeByeVPN LANGUAGES CXX)
 
 include(CTest)
+include(ProcessorCount)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,6 +16,13 @@ option(BYEBYEVPN_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(BYEBYEVPN_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(BYEBYEVPN_ENABLE_MSAN "Enable MemorySanitizer (Clang/Linux only)" OFF)
 option(BYEBYEVPN_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+
+ProcessorCount(BYEBYEVPN_HOST_PROCESSOR_COUNT)
+if(NOT BYEBYEVPN_HOST_PROCESSOR_COUNT GREATER 0)
+    set(BYEBYEVPN_HOST_PROCESSOR_COUNT 1)
+endif()
+set(BYEBYEVPN_TEST_SHARDS "${BYEBYEVPN_HOST_PROCESSOR_COUNT}" CACHE STRING
+    "Number of Catch2 shards to register with CTest")
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")

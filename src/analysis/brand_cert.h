@@ -1,11 +1,17 @@
-#ifndef ANALYSIS_BRAND_CERT_H
-#define ANALYSIS_BRAND_CERT_H
+#pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
-std::string cert_claims_brand(const std::string& subject_cn, const std::vector<std::string>& san);
-bool asn_owns_brand(const std::string& brand_domain, const std::vector<std::string>& asn_orgs);
+// Check if certificate claims a well-known brand domain
+[[nodiscard]] std::string cert_claims_brand(
+    std::string_view subject_cn,
+    const std::vector<std::string>& san
+);
 
-
-#endif // ANALYSIS_BRAND_CERT_H
+// Check if ASN organization owns the brand
+[[nodiscard]] bool asn_owns_brand(
+    std::string_view brand_domain,
+    const std::vector<std::string>& asn_orgs
+);

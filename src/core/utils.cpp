@@ -1,61 +1,27 @@
 #include "utils.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <ranges>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-using std::string;
-using std::vector;
-
-bool g_no_color = false;
-bool g_verbose  = false;
-int  g_threads  = 1200;
-int  g_tcp_to   = 1000;
-int  g_udp_to   = 900;
-bool g_stealth    = false;
-bool g_no_geoip   = false;
-bool g_no_ct      = false;
-bool g_udp_jitter = false;
-bool g_tcp_syn_scan = false;
-
-bool   g_save_requested = false;
-FILE*  g_save_fp = nullptr;
-string g_save_path;
-string g_observer_cc;
-
-PortMode    g_port_mode = PortMode::FULL;
-int         g_range_lo  = 1;
-int         g_range_hi  = 65535;
-std::vector<int> g_port_list;
-
-namespace C {
-    const char* RST  = "\x1b[0m";
-    const char* BOLD = "\x1b[1m";
-    const char* DIM  = "\x1b[2m";
-    const char* RED  = "\x1b[31m";
-    const char* GRN  = "\x1b[32m";
-    const char* YEL  = "\x1b[33m";
-    const char* BLU  = "\x1b[34m";
-    const char* MAG  = "\x1b[35m";
-    const char* CYN  = "\x1b[36m";
-    const char* WHT  = "\x1b[97m";
-}
-const char* col(const char* c) { return g_no_color ? "" : c; }
-
-void save_write_stripped(const char* s, size_t n) {
-    if (!g_save_fp || !s || !n) return;
-    for (size_t i = 0; i < n; ) {
-        if (s[i] == '\x1b' && i + 1 < n && s[i+1] == '[') {
+// Strip ANSI escape sequences when writing to save file
+void save_write_stripped(const char* s, std::size_t n) {
+    if (!g_save_fp || !s || n == 0) return;
+    
+    for (std::size_t i{0}; i < n; ) {
+        if (s[i] == '\x1b' && i + 1 < n && s[i + 1] == '[') {
             i += 2;
             while (i < n && !(s[i] >= '@' && s[i] <= '~')) ++i;
             if (i < n) ++i;
         } else {
-            fputc((unsigned char)s[i], g_save_fp);
+            std::fputc(static_cast<unsigned char>(s[i]), g_save_fp);
             ++i;
         }
     }
@@ -67,9 +33,8 @@ int tee_printf(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
 
-    char buf_small[2048];
-    // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
-    int needed = vsnprintf(buf_small, sizeof(buf_small), fmt, ap);
+    std::array<char, 2048> buf_small{};
+    const int needed{std::vsnprintf(buf_small.data(), buf_small.size(), fmt, ap)};
     va_end(ap);
 
     if (needed < 0) {
@@ -80,23 +45,27 @@ int tee_printf(const char* fmt, ...) {
         return 0;
     }
 
-    if (needed < (int)sizeof(buf_small)) {
-        fwrite(buf_small, 1, needed, stdout);
-        if (g_save_fp) save_write_stripped(buf_small, (size_t)needed);
+    if (static_cast<std::size_t>(needed) < buf_small.size()) {
+        std::fwrite(buf_small.data(), 1, static_cast<std::size_t>(needed), stdout);
+        if (g_save_fp) {
+            save_write_stripped(buf_small.data(), static_cast<std::size_t>(needed));
+        }
     } else {
-        std::vector<char> buf_big((size_t)needed + 1);
+        std::vector<char> buf_big(static_cast<std::size_t>(needed) + 1);
         va_list ap2;
         va_start(ap2, fmt);
-        // NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized)
-        const int ret2 = vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2);
+        const int ret2{std::vsnprintf(buf_big.data(), buf_big.size(), fmt, ap2)};
         va_end(ap2);
+        
         if (ret2 < 0) {
             return ret2;
         }
 
         if (ret2 > 0) {
-            fwrite(buf_big.data(), 1, (size_t)ret2, stdout);
-            if (g_save_fp) save_write_stripped(buf_big.data(), (size_t)ret2);
+            std::fwrite(buf_big.data(), 1, static_cast<std::size_t>(ret2), stdout);
+            if (g_save_fp) {
+                save_write_stripped(buf_big.data(), static_cast<std::size_t>(ret2));
+            }
         }
     }
     return needed;
@@ -104,21 +73,22 @@ int tee_printf(const char* fmt, ...) {
 
 int tee_puts(const char* s) {
     if (!s) return 0;
-    fputs(s, stdout);
-    fputc('\n', stdout);
+    std::fputs(s, stdout);
+    std::fputc('\n', stdout);
     if (g_save_fp) {
-        save_write_stripped(s, strlen(s));
-        fputc('\n', g_save_fp);
+        save_write_stripped(s, std::strlen(s));
+        std::fputc('\n', g_save_fp);
     }
     return 0;
 }
 
 void enable_vt() {
 #ifdef _WIN32
-    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD mode = 0;
-    if (GetConsoleMode(h, &mode))
+    HANDLE h{GetStdHandle(STD_OUTPUT_HANDLE)};
+    DWORD mode{0};
+    if (GetConsoleMode(h, &mode)) {
         SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
     SetConsoleOutputCP(CP_UTF8);
 #endif
 }
@@ -136,142 +106,218 @@ void banner() {
            col(C::DIM), col(C::RST));
 }
 
-string tolower_s(string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
-bool contains(const string& h, const string& n) { return h.find(n) != string::npos; }
-bool starts_with(const string& s, const string& p) {
-    return s.size() >= p.size() && std::memcmp(s.data(), p.data(), p.size()) == 0;
-}
-string trim(const string& s) {
-    size_t a=0,b=s.size();
-    while(a<b && isspace((unsigned char)s[a])) ++a;
-    while(b>a && isspace((unsigned char)s[b-1])) --b;
-    return s.substr(a,b-a);
-}
-vector<string> split(const string& s, char sep) {
-    vector<string> r; string cur;
-    for (char c: s) {
-        if (c == sep) { r.push_back(cur); cur.clear(); }
-        else cur.push_back(c);
-    }
-    r.push_back(cur);
-    return r;
-}
-string hex_s(const unsigned char* d, size_t n, bool spaces) {
-    static const char* hex = "0123456789abcdef";
-    string s; s.reserve(n*(spaces?3:2));
-    for (size_t i=0;i<n;++i) {
-        s += hex[(d[i]>>4)&0xF]; s += hex[d[i]&0xF];
-        if (spaces && i+1<n) s += ' ';
-    }
+[[nodiscard]] std::string tolower_s(std::string s) {
+    // Using C++20 ranges
+    std::ranges::transform(s, s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return s;
 }
 
-string url_encode(const string& s) {
-    static const char* hex = "0123456789ABCDEF";
-    string out;
-    out.reserve(s.size() * 3);
-    for (unsigned char c : s) {
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            out.push_back((char)c);
+[[nodiscard]] bool contains(std::string_view haystack, std::string_view needle) noexcept {
+    return haystack.find(needle) != std::string_view::npos;
+}
+
+[[nodiscard]] bool starts_with(std::string_view s, std::string_view prefix) noexcept {
+    // C++20 starts_with
+    return s.starts_with(prefix);
+}
+
+[[nodiscard]] std::string trim(std::string_view s) {
+    auto first{s.begin()};
+    auto last{s.end()};
+    
+    while (first != last && std::isspace(static_cast<unsigned char>(*first))) {
+        ++first;
+    }
+    while (last != first && std::isspace(static_cast<unsigned char>(*(last - 1)))) {
+        --last;
+    }
+    
+    return std::string{first, last};
+}
+
+[[nodiscard]] std::vector<std::string> split(std::string_view s, char sep) {
+    std::vector<std::string> result;
+    std::string current;
+    
+    for (char c : s) {
+        if (c == sep) {
+            result.push_back(std::move(current));
+            current.clear();
         } else {
-            out.push_back('%');
-            out.push_back(hex[(c >> 4) & 0x0F]);
-            out.push_back(hex[c & 0x0F]);
+            current.push_back(c);
         }
     }
+    result.push_back(std::move(current));
+    
+    return result;
+}
+
+[[nodiscard]] std::string hex_s(std::span<const unsigned char> data, bool spaces) {
+    constexpr std::array<char, 16> hex_chars{'0', '1', '2', '3', '4', '5', '6', '7',
+                                              '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    
+    std::string result;
+    result.reserve(data.size() * (spaces ? 3 : 2));
+    
+    for (std::size_t i{0}; i < data.size(); ++i) {
+        result += hex_chars[(data[i] >> 4) & 0xF];
+        result += hex_chars[data[i] & 0xF];
+        if (spaces && i + 1 < data.size()) {
+            result += ' ';
+        }
+    }
+    
+    return result;
+}
+
+[[nodiscard]] std::string hex_s(const unsigned char* d, std::size_t n, bool spaces) {
+    return hex_s(std::span<const unsigned char>{d, n}, spaces);
+}
+
+[[nodiscard]] std::string url_encode(std::string_view s) {
+    constexpr std::array<char, 16> hex_chars{'0', '1', '2', '3', '4', '5', '6', '7',
+                                              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+    std::string out;
+    out.reserve(s.size() * 3);
+    
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex_chars[(c >> 4) & 0x0F]);
+            out.push_back(hex_chars[c & 0x0F]);
+        }
+    }
+    
     return out;
 }
 
 namespace JSON {
-    struct Value {
-        std::string s;
-        std::map<std::string, Value> o;
-        std::vector<std::string> order;
-        std::vector<Value> a;
-        bool is_obj = false, is_arr = false;
-    };
 
-    static std::string unescape(const std::string& s) {
-        std::string r;
-        for (size_t i = 0; i < s.size(); ++i) {
-            if (s[i] == '\\' && i + 1 < s.size()) {
-                char c = s[++i];
-                if (c == 'n') r += '\n'; else if (c == 'r') r += '\r'; else if (c == 't') r += '\t';
-                else if (c == '"') r += '"'; else if (c == '\\') r += '\\';
-                else if (c == 'u' && i + 4 < s.size()) { i += 4; r += '?'; }
-                else r += c;
-            } else r += s[i];
-        }
-        return r;
-    }
+struct Value {
+    std::string s;
+    std::map<std::string, Value> o;
+    std::vector<std::string> order;
+    std::vector<Value> a;
+    bool is_obj{false};
+    bool is_arr{false};
+};
 
-    static Value parse(const std::string& b, size_t& i) {
-        while (i < b.size() && isspace((unsigned char)b[i])) i++;
-        Value v;
-        if (i >= b.size()) return v;
-        if (b[i] == '"') {
-            size_t start = ++i;
-            bool escaped = false;
-            while (i < b.size()) {
-                if (escaped) escaped = false;
-                else if (b[i] == '\\') escaped = true;
-                else if (b[i] == '"') break;
-                i++;
+[[nodiscard]] std::string unescape(std::string_view s) {
+    std::string result;
+    result.reserve(s.size());
+    
+    for (std::size_t i{0}; i < s.size(); ++i) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char c{s[++i]};
+            switch (c) {
+                case 'n': result += '\n'; break;
+                case 'r': result += '\r'; break;
+                case 't': result += '\t'; break;
+                case '"': result += '"'; break;
+                case '\\': result += '\\'; break;
+                case 'u':
+                    if (i + 4 < s.size()) {
+                        i += 4;
+                        result += '?';
+                    }
+                    break;
+                default:
+                    result += c;
+                    break;
             }
-            v.s = unescape(b.substr(start, i - start));
-            if (i < b.size()) i++;
-        } else if (b[i] == '{') {
-            v.is_obj = true; i++;
-            while (i < b.size() && b[i] != '}') {
-                Value key = parse(b, i);
-                while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ':')) i++;
-                if (v.o.find(key.s) == v.o.end()) v.order.push_back(key.s);
-                v.o[key.s] = parse(b, i);
-                while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ',')) i++;
-            }
-            if (i < b.size()) i++;
-        } else if (b[i] == '[') {
-            v.is_arr = true; i++;
-            while (i < b.size() && b[i] != ']') {
-                v.a.push_back(parse(b, i));
-                while (i < b.size() && (isspace((unsigned char)b[i]) || b[i] == ',')) i++;
-            }
-            if (i < b.size()) i++;
         } else {
-            size_t start = i;
-            while (i < b.size() && b[i] != ',' && b[i] != '}' && b[i] != ']' && !isspace((unsigned char)b[i])) i++;
-            v.s = b.substr(start, i - start);
+            result += s[i];
         }
-        return v;
     }
-
-    static std::string find_key(const Value& v, const std::string& key) {
-        if (v.is_obj) {
-            const auto it = std::find_if(v.o.begin(), v.o.end(),
-                                         [&](const auto& kv) { return kv.first == key; });
-            if (it != v.o.end()) return it->second.s;
-            for (const auto& child_key : v.order) {
-                const auto child_it = v.o.find(child_key);
-                if (child_it == v.o.end()) continue;
-                std::string r = find_key(child_it->second, key);
-                if (!r.empty()) return r;
-            }
-        }
-        if (v.is_arr) {
-            for (const auto& child : v.a) {
-                std::string r = find_key(child, key);
-                if (!r.empty()) return r;
-            }
-        }
-        return "";
-    }
+    return result;
 }
 
-string json_get_str(const string& body, const string& key) {
-    size_t i = 0;
+Value parse(std::string_view b, std::size_t& i) {
+    while (i < b.size() && std::isspace(static_cast<unsigned char>(b[i]))) ++i;
+    
+    Value v;
+    if (i >= b.size()) return v;
+    
+    if (b[i] == '"') {
+        std::size_t start{++i};
+        bool escaped{false};
+        while (i < b.size()) {
+            if (escaped) {
+                escaped = false;
+            } else if (b[i] == '\\') {
+                escaped = true;
+            } else if (b[i] == '"') {
+                break;
+            }
+            ++i;
+        }
+        v.s = unescape(b.substr(start, i - start));
+        if (i < b.size()) ++i;
+    } else if (b[i] == '{') {
+        v.is_obj = true;
+        ++i;
+        while (i < b.size() && b[i] != '}') {
+            Value key{parse(b, i)};
+            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b[i])) || b[i] == ':')) ++i;
+            if (v.o.find(key.s) == v.o.end()) {
+                v.order.push_back(key.s);
+            }
+            v.o[key.s] = parse(b, i);
+            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b[i])) || b[i] == ',')) ++i;
+        }
+        if (i < b.size()) ++i;
+    } else if (b[i] == '[') {
+        v.is_arr = true;
+        ++i;
+        while (i < b.size() && b[i] != ']') {
+            v.a.push_back(parse(b, i));
+            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b[i])) || b[i] == ',')) ++i;
+        }
+        if (i < b.size()) ++i;
+    } else {
+        std::size_t start{i};
+        while (i < b.size() && b[i] != ',' && b[i] != '}' && b[i] != ']' &&
+               !std::isspace(static_cast<unsigned char>(b[i]))) {
+            ++i;
+        }
+        v.s = std::string{b.substr(start, i - start)};
+    }
+    
+    return v;
+}
+
+[[nodiscard]] std::string find_key(const Value& v, std::string_view key) {
+    if (v.is_obj) {
+        // Using C++20 ranges::find_if
+        auto it = std::ranges::find_if(v.o, [&](const auto& kv) {
+            return kv.first == key;
+        });
+        if (it != v.o.end()) {
+            return it->second.s;
+        }
+        for (const auto& child_key : v.order) {
+            auto child_it{v.o.find(child_key)};
+            if (child_it == v.o.end()) continue;
+            std::string result{find_key(child_it->second, key)};
+            if (!result.empty()) return result;
+        }
+    }
+    if (v.is_arr) {
+        for (const auto& child : v.a) {
+            std::string result{find_key(child, key)};
+            if (!result.empty()) return result;
+        }
+    }
+    return "";
+}
+
+} // namespace JSON
+
+[[nodiscard]] std::string json_get_str(std::string_view body, std::string_view key) {
+    std::size_t i{0};
     return JSON::find_key(JSON::parse(body, i), key);
 }

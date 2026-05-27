@@ -8,62 +8,81 @@
 #endif
 
 #include <mutex>
+#include <array>
 
 namespace {
 
+// Thread-safe initialization flag
 std::once_flag g_ossl_once;
-bool g_ossl_ok = false;
+bool g_ossl_ok{false};
 std::string g_ossl_err;
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
-OSSL_PROVIDER* g_provider_default = nullptr;
-OSSL_PROVIDER* g_provider_base = nullptr;
-OSSL_PROVIDER* g_provider_legacy = nullptr;
+// OpenSSL 3.0+ provider handles
+OSSL_PROVIDER* g_provider_default{nullptr};
+OSSL_PROVIDER* g_provider_base{nullptr};
+OSSL_PROVIDER* g_provider_legacy{nullptr};
 #endif
 
-std::string last_ssl_error_text(const char* fallback) {
-    const unsigned long e = ERR_get_error();
-    if (e == 0) return fallback ? std::string(fallback) : std::string("openssl");
-    char buf[256] = {0};
-    ERR_error_string_n(e, buf, sizeof(buf));
-    return buf[0] ? std::string(buf) : (fallback ? std::string(fallback) : std::string("openssl"));
+// Get last SSL error as string
+[[nodiscard]] std::string last_ssl_error_text(const char* fallback = "openssl") {
+    const unsigned long e{ERR_get_error()};
+    if (e == 0) {
+        return fallback ? std::string{fallback} : std::string{"openssl"};
+    }
+    
+    std::array<char, 256> buf{};
+    ERR_error_string_n(e, buf.data(), buf.size());
+    
+    return buf[0] ? std::string{buf.data()} : 
+           (fallback ? std::string{fallback} : std::string{"openssl"});
+}
+
+// Perform one-time initialization
+void do_init() {
+    ERR_clear_error();
+    
+    // Initialize SSL library
+    if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr) != 1) {
+        g_ossl_err = last_ssl_error_text("OPENSSL_init_ssl failed");
+        g_ossl_ok = false;
+        return;
+    }
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    // Initialize crypto for OpenSSL 3.0+
+    if (OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr) != 1) {
+        g_ossl_err = last_ssl_error_text("OPENSSL_init_crypto failed");
+        g_ossl_ok = false;
+        return;
+    }
+
+    // Load required providers
+    g_provider_default = OSSL_PROVIDER_load(nullptr, "default");
+    g_provider_base = OSSL_PROVIDER_load(nullptr, "base");
+    
+    if (!g_provider_default || !g_provider_base) {
+        g_ossl_err = last_ssl_error_text("OSSL_PROVIDER_load failed");
+        g_ossl_ok = false;
+        return;
+    }
+
+    // Try to load legacy provider (optional, may not be available)
+    g_provider_legacy = OSSL_PROVIDER_load(nullptr, "legacy");
+    ERR_clear_error();  // Clear any error from optional legacy load
+#endif
+
+    g_ossl_ok = true;
 }
 
 } // namespace
 
-bool openssl_runtime_init(std::string* err) {
-    std::call_once(g_ossl_once, [] {
-        ERR_clear_error();
-
-        if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr) != 1) {
-            g_ossl_err = last_ssl_error_text("OPENSSL_init_ssl failed");
-            g_ossl_ok = false;
-            return;
-        }
-
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-        if (OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr) != 1) {
-            g_ossl_err = last_ssl_error_text("OPENSSL_init_crypto failed");
-            g_ossl_ok = false;
-            return;
-        }
-
-        g_provider_default = OSSL_PROVIDER_load(nullptr, "default");
-        g_provider_base = OSSL_PROVIDER_load(nullptr, "base");
-        if (!g_provider_default || !g_provider_base) {
-            g_ossl_err = last_ssl_error_text("OSSL_PROVIDER_load failed");
-            g_ossl_ok = false;
-            return;
-        }
-
-        g_provider_legacy = OSSL_PROVIDER_load(nullptr, "legacy");
-        ERR_clear_error();
-#endif
-
-        g_ossl_ok = true;
-    });
-
-    if (!g_ossl_ok && err) *err = g_ossl_err;
+[[nodiscard]] bool openssl_runtime_init(std::string* err) {
+    std::call_once(g_ossl_once, do_init);
+    
+    if (!g_ossl_ok && err) {
+        *err = g_ossl_err;
+    }
     return g_ossl_ok;
 }
 
@@ -88,17 +107,19 @@ void openssl_runtime_cleanup() {
 #endif
 }
 
-bool ssl_attach_socket(SSL* ssl, SOCKET s, std::string* err) {
+[[nodiscard]] bool ssl_attach_socket(SSL* ssl, SOCKET s, std::string* err) {
     if (!ssl) {
         if (err) *err = "ssl_attach_socket: ssl=null";
         return false;
     }
+    
     if (s == INVALID_SOCKET) {
         if (err) *err = "ssl_attach_socket: invalid socket";
         return false;
     }
 
 #if defined(_WIN32) && defined(_WIN64)
+    // On 64-bit Windows, check if socket handle fits in int
     if (s > static_cast<SOCKET>(0x7fffffffULL)) {
         if (err) {
             *err = "ssl_attach_socket: SOCKET handle exceeds OpenSSL fd range";

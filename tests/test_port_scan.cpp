@@ -42,7 +42,7 @@ TEST_CASE("build_tcp_ports RANGE clamps boundaries") {
 
     const auto ports = build_tcp_ports();
     REQUIRE(ports.size() == 3);
-    REQUIRE(ports[0] == 1);
+    REQUIRE(ports[0] == kMinPortNumber);
     REQUIRE(ports[2] == 3);
 }
 
@@ -66,9 +66,9 @@ TEST_CASE("build_tcp_ports FULL generates 65535 ports") {
     g_port_mode = PortMode::FULL;
 
     const auto ports = build_tcp_ports();
-    REQUIRE(ports.size() == 65535);
-    REQUIRE(ports.front() == 1);
-    REQUIRE(ports.back() == 65535);
+    REQUIRE(ports.size() == static_cast<std::size_t>(kMaxPortNumber));
+    REQUIRE(ports.front() == kMinPortNumber);
+    REQUIRE(ports.back() == kMaxPortNumber);
 }
 
 TEST_CASE("build_tcp_ports RANGE reversed hi < lo yields empty") {
@@ -100,7 +100,7 @@ TEST_CASE("build_tcp_ports RANGE high boundary clamping") {
 
     const auto ports = build_tcp_ports();
     REQUIRE(ports.size() == 6);
-    REQUIRE(ports.back() == 65535);
+    REQUIRE(ports.back() == kMaxPortNumber);
 }
 
 TEST_CASE("port_hint covers additional port ranges") {

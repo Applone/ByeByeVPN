@@ -31,14 +31,14 @@ TEST_CASE("ct_check rejects non-hex or invalid-length digests") {
     REQUIRE_FALSE(bad_len.found);
     REQUIRE(bad_len.err == "invalid sha256");
 
-    const CtCheck bad_hex = ct_check(std::string(64, 'z'), false);
+    const CtCheck bad_hex = ct_check(std::string(kCtCheckSha256HexLength, 'z'), false);
     REQUIRE_FALSE(bad_hex.queried);
     REQUIRE_FALSE(bad_hex.found);
     REQUIRE(bad_hex.err == "invalid sha256");
 }
 
 TEST_CASE("ct_check reports remote-disabled when not allowed") {
-    const std::string valid_sha(64, 'a');
+    const std::string valid_sha(kCtCheckSha256HexLength, 'a');
     const CtCheck r = ct_check(valid_sha, false);
 
     REQUIRE_FALSE(r.queried);
@@ -50,7 +50,7 @@ TEST_CASE("ct_check reports remote-disabled when not allowed") {
 TEST_CASE("ct_check remote path reports HTTP status failure") {
     g_stub_http_resp = HttpResp{503, "", "", 0};
 
-    const CtCheck r = ct_check_testable(std::string(64, 'b'), true);
+    const CtCheck r = ct_check_testable(std::string(kCtCheckSha256HexLength, 'b'), true);
     REQUIRE(r.queried);
     REQUIRE_FALSE(r.found);
     REQUIRE(r.log_entries == 0);
@@ -60,7 +60,7 @@ TEST_CASE("ct_check remote path reports HTTP status failure") {
 TEST_CASE("ct_check remote path handles JSON parse failures") {
     g_stub_http_resp = HttpResp{200, "[", "", 0};
 
-    const CtCheck r = ct_check_testable(std::string(64, 'c'), true);
+    const CtCheck r = ct_check_testable(std::string(kCtCheckSha256HexLength, 'c'), true);
     REQUIRE(r.queried);
     REQUIRE_FALSE(r.found);
     REQUIRE(r.log_entries == 0);
@@ -70,7 +70,7 @@ TEST_CASE("ct_check remote path handles JSON parse failures") {
 TEST_CASE("ct_check remote path parses array and caps entry count") {
     SECTION("empty array") {
         g_stub_http_resp = HttpResp{200, "[]", "", 0};
-        const CtCheck r = ct_check_testable(std::string(64, 'd'), true);
+        const CtCheck r = ct_check_testable(std::string(kCtCheckSha256HexLength, 'd'), true);
         REQUIRE(r.queried);
         REQUIRE_FALSE(r.found);
         REQUIRE(r.log_entries == 0);
@@ -79,7 +79,7 @@ TEST_CASE("ct_check remote path parses array and caps entry count") {
 
     SECTION("single object") {
         g_stub_http_resp = HttpResp{200, "[{\"id\":1,\"ok\":true}]", "", 0};
-        const CtCheck r = ct_check_testable(std::string(64, 'e'), true);
+        const CtCheck r = ct_check_testable(std::string(kCtCheckSha256HexLength, 'e'), true);
         REQUIRE(r.queried);
         REQUIRE(r.found);
         REQUIRE(r.log_entries == 1);
@@ -88,32 +88,32 @@ TEST_CASE("ct_check remote path parses array and caps entry count") {
 
     SECTION("many objects are capped") {
         std::string body = "[";
-        for (int i = 0; i < 55; ++i) {
+        for (int i = 0; i < kCtCheckMaxLogEntries + 5; ++i) {
             if (i > 0) body += ",";
             body += "{\"n\":" + std::to_string(i) + "}";
         }
         body += "]";
 
         g_stub_http_resp = HttpResp{200, body, "", 0};
-        const CtCheck r = ct_check_testable(std::string(64, 'f'), true);
+        const CtCheck r = ct_check_testable(std::string(kCtCheckSha256HexLength, 'f'), true);
         REQUIRE(r.queried);
         REQUIRE(r.found);
-        REQUIRE(r.log_entries == 50);
+        REQUIRE(r.log_entries == kCtCheckMaxLogEntries);
         REQUIRE(r.err.empty());
     }
 
-    SECTION("exactly 50 entries") {
+    SECTION("exactly capped entries") {
         std::string body = "[";
-        for (int i = 0; i < 50; ++i) {
+        for (int i = 0; i < kCtCheckMaxLogEntries; ++i) {
             if (i > 0) body += ",";
             body += "{\"n\":" + std::to_string(i) + "}";
         }
         body += "]";
 
         g_stub_http_resp = HttpResp{200, body, "", 0};
-        const CtCheck r = ct_check_testable(std::string(64, 'a'), true);
+        const CtCheck r = ct_check_testable(std::string(kCtCheckSha256HexLength, 'a'), true);
         REQUIRE(r.found);
-        REQUIRE(r.log_entries == 50);
+        REQUIRE(r.log_entries == kCtCheckMaxLogEntries);
     }
 }
 

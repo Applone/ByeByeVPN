@@ -4,12 +4,16 @@
 #include "tcp_async_scan.h"
 
 #include <algorithm>
+#include <array>
 #include <string>
+#include <string_view>
 #include <vector>
+#include <ranges>
 
 namespace {
 
-static const std::vector<int> TCP_FAST_PORTS = {
+// Fast scan ports - commonly used VPN and proxy ports
+inline constexpr std::array kTcpFastPorts{
     22, 80, 81, 443,
     1080, 1081,
     3128, 4433, 4443,
@@ -28,74 +32,98 @@ static const std::vector<int> TCP_FAST_PORTS = {
     62078
 };
 
-} // namespace
-
-std::vector<int> build_tcp_ports() {
-    std::vector<int> p;
-    switch (g_port_mode) {
-        case PortMode::FAST:
-            p = TCP_FAST_PORTS;
-            break;
-        case PortMode::RANGE: {
-            const int lo = std::max(1, g_range_lo);
-            const int hi = std::min(65535, g_range_hi);
-            if (hi < lo) break;
-            p.reserve(static_cast<size_t>(hi) - static_cast<size_t>(lo) + 1);
-            for (int i = lo; i <= hi; ++i) p.push_back(i);
-            break;
-        }
-        case PortMode::LIST:
-            p = g_port_list;
-            break;
-        case PortMode::FULL:
-        default:
-            p.reserve(65535);
-            for (int i = 1; i <= 65535; ++i) p.push_back(i);
-            break;
-    }
-    return p;
-}
-
+// Port to service mapping
 struct PortHint {
     int port;
     const char* svc;
 };
 
-static const std::vector<PortHint> PORT_HINTS = {
-    {22, "SSH"},
-    {80, "HTTP"},
-    {443, "HTTPS / VLESS / Reality"},
-    {1080, "SOCKS5"},
-    {3128, "HTTP proxy"},
-    {4433, "XTLS / Reality"},
-    {4443, "XTLS / Reality"},
-    {8080, "HTTP proxy"},
-    {8443, "HTTPS alt / Reality"},
-    {8888, "HTTP alt"},
-    {9050, "Tor SOCKS"},
-    {9051, "Tor control"},
-    {10808, "v2ray/xray SOCKS"},
-    {10809, "v2ray/xray HTTP"},
-    {10810, "v2ray/xray alt"},
-    {41641, "WireGuard alt"},
-    {51820, "WireGuard"},
-    {55555, "AmneziaWG"},
+inline constexpr std::array kPortHints{
+    PortHint{22, "SSH"},
+    PortHint{80, "HTTP"},
+    PortHint{443, "HTTPS / VLESS / Reality"},
+    PortHint{1080, "SOCKS5"},
+    PortHint{3128, "HTTP proxy"},
+    PortHint{4433, "XTLS / Reality"},
+    PortHint{4443, "XTLS / Reality"},
+    PortHint{8080, "HTTP proxy"},
+    PortHint{8443, "HTTPS alt / Reality"},
+    PortHint{8888, "HTTP alt"},
+    PortHint{9050, "Tor SOCKS"},
+    PortHint{9051, "Tor control"},
+    PortHint{10808, "v2ray/xray SOCKS"},
+    PortHint{10809, "v2ray/xray HTTP"},
+    PortHint{10810, "v2ray/xray alt"},
+    PortHint{41641, "WireGuard alt"},
+    PortHint{51820, "WireGuard"},
+    PortHint{55555, "AmneziaWG"},
 };
 
-const char* port_hint(int p) {
-    const auto it = std::find_if(PORT_HINTS.begin(), PORT_HINTS.end(), [p](const PortHint& h) {
+} // namespace
+
+[[nodiscard]] std::vector<int> build_tcp_ports() {
+    std::vector<int> p;
+
+    switch (g_port_mode) {
+        case PortMode::FAST:
+            p.assign(kTcpFastPorts.begin(), kTcpFastPorts.end());
+            break;
+
+        case PortMode::RANGE: {
+            const int lo{std::max(kMinPortNumber, g_range_lo)};
+            const int hi{std::min(kMaxPortNumber, g_range_hi)};
+            if (hi < lo) break;
+
+            p.reserve(static_cast<std::size_t>(hi) - static_cast<std::size_t>(lo) + 1);
+            for (int i{lo}; i <= hi; ++i) {
+                p.push_back(i);
+            }
+            break;
+        }
+
+        case PortMode::LIST:
+            p = g_port_list;
+            break;
+
+        case PortMode::FULL:
+        default:
+            p.reserve(static_cast<std::size_t>(kMaxPortNumber));
+            for (int i{kMinPortNumber}; i <= kMaxPortNumber; ++i) {
+                p.push_back(i);
+            }
+            break;
+    }
+
+    return p;
+}
+
+[[nodiscard]] const char* port_hint(int p) {
+    // Search known port hints
+    const auto it{std::ranges::find_if(kPortHints, [p](const PortHint& h) {
         return h.port == p;
-    });
-    if (it != PORT_HINTS.end()) return it->svc;
-    if (p == 6443 || p == 8443 || p == 4443) return "HTTPS alt / possible VPN over TLS";
-    if (p >= 10800 && p <= 10820) return "v2ray/xray local-like range";
+    })};
+
+    if (it != kPortHints.end()) {
+        return it->svc;
+    }
+
+    // Check special ranges
+    if (p == 6443 || p == 8443 || p == 4443) {
+        return "HTTPS alt / possible VPN over TLS";
+    }
+    if (p >= 10800 && p <= 10820) {
+        return "v2ray/xray local-like range";
+    }
+
     return "";
 }
 
-std::vector<TcpOpen> scan_tcp(const std::string& host,
-                              const std::vector<int>& ports,
-                              int threads,
-                              int to_ms,
-                              ScanStats* stats) {
-    return scan_tcp_async(host, ports, threads, to_ms, stats);
+[[nodiscard]] std::vector<TcpOpen> scan_tcp(
+    std::string_view host,
+    const std::vector<int>& ports,
+    int threads,
+    int to_ms,
+    ScanStats* stats
+) {
+    return scan_tcp_async(std::string{host}, ports, threads, to_ms, stats);
 }

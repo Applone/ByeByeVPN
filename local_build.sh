@@ -174,6 +174,8 @@ STATIC_FLAG="-DBYEBYEVPN_STATIC=OFF"
 
 export CC=clang
 export CXX=clang++
+TEST_PARALLEL_JOBS=$(nproc)
+[ "$TEST_PARALLEL_JOBS" -lt 1 ] && TEST_PARALLEL_JOBS=1
 
 if [ "$BUILD_LINUX" -eq 1 ]; then
     echo -e "\n${BOLD}${CYAN}==============================================${RESET}"
@@ -218,7 +220,7 @@ if [ "$BUILD_LINUX" -eq 1 ]; then
 
     mkdir -p build-cov/profiles
     export LLVM_PROFILE_FILE="$(pwd)/build-cov/profiles/byebyevpn_tests-%p.profraw"
-    ctest --test-dir build-cov --output-on-failure
+    ctest --test-dir build-cov --output-on-failure --parallel "$TEST_PARALLEL_JOBS"
 
     llvm-profdata merge -sparse build-cov/profiles/*.profraw -o build-cov/coverage.profdata
     llvm-cov export -format=lcov \
@@ -308,7 +310,7 @@ PARALLEL_JOBS=$(( $(nproc) / 2 ))
 cmake --build "$BUILD_DIR" --parallel "$PARALLEL_JOBS"
 
 export LD_LIBRARY_PATH="${LIBCXX_ROOT}/lib:${LD_LIBRARY_PATH:-}"
-ctest --test-dir "$BUILD_DIR" --output-on-failure
+ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel "$PARALLEL_JOBS"
 EOF
 
     done
@@ -342,10 +344,10 @@ if [ "$BUILD_WINDOWS" -eq 1 ]; then
     fi
 
     echo -e "${CYAN}Running Windows tests...${RESET}"
-    
+
     TEST_CMD=""
     RUN_TESTS=1
-    
+
     # Check for WSL
     if grep -qi "microsoft" /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
         echo -e "${YELLOW}WSL environment detected.${RESET}"

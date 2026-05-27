@@ -15,8 +15,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
-#include <stdexcept>
+#include <array>
 #include <string>
+#include <string_view>
+#include <ranges>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -25,8 +27,12 @@
 
 namespace {
 
-bool is_ipv4_literal(const std::string& s) {
-    int dots = 0;
+// Constants
+inline constexpr std::size_t kMaxResponseSize{1024 * 1024};  // 1 MB
+
+// Check if string is an IPv4 literal
+[[nodiscard]] bool is_ipv4_literal(std::string_view s) noexcept {
+    int dots{0};
     for (char c : s) {
         if (c == '.') {
             ++dots;
@@ -37,75 +43,91 @@ bool is_ipv4_literal(const std::string& s) {
     return dots == 3;
 }
 
-bool is_ip_literal(const std::string& host) {
+// Check if string is an IP literal (IPv4 or IPv6)
+[[nodiscard]] bool is_ip_literal(std::string_view host) noexcept {
     if (host.empty()) return false;
-    if (host[0] == '[') return false;
-    return is_ipv4_literal(host) || host.find(':') != std::string::npos;
+    if (host[0] == '[') return false;  // IPv6 in brackets not directly supported
+    return is_ipv4_literal(host) || host.find(':') != std::string_view::npos;
 }
 
-bool parse_http_port(const std::string& text, int& port) {
+// Parse port from string
+[[nodiscard]] bool parse_http_port(std::string_view text, int& port) {
     if (text.empty()) return false;
-    if (!std::all_of(text.begin(), text.end(), [](char c) {
-            return std::isdigit(static_cast<unsigned char>(c)) != 0;
-        })) return false;
-
-    char* end = nullptr;
+    
+    // Check all digits
+    if (!std::ranges::all_of(text, [](char c) {
+        return std::isdigit(static_cast<unsigned char>(c)) != 0;
+    })) {
+        return false;
+    }
+    
+    char* endptr{nullptr};
     errno = 0;
-    long v = std::strtol(text.c_str(), &end, 10);
-    if (errno != 0 || end == text.c_str() || *end != '\0' || v < 1 || v > 65535) return false;
-
-    port = (int)v;
+    const std::string text_str{text};
+    const long v{std::strtol(text_str.c_str(), &endptr, 10)};
+    
+    if (errno != 0 || endptr == text_str.c_str() || *endptr != '\0' || v < 1 || v > 65535) {
+        return false;
+    }
+    
+    port = static_cast<int>(v);
     return true;
 }
 
+// Set socket timeouts
 void set_socket_timeouts(SOCKET s, int timeout_ms) {
 #ifdef _WIN32
-    DWORD to = (DWORD)timeout_ms;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
+    DWORD to{static_cast<DWORD>(timeout_ms)};
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
+    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&to), sizeof(to));
 #else
     timeval tv{};
     tv.tv_sec = timeout_ms / 1000;
     tv.tv_usec = (timeout_ms % 1000) * 1000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+    ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
 #endif
 }
 
-std::string ssl_error_message(SSL* ssl, int rc, const char* op) {
-    int ssl_err = SSL_get_error(ssl, rc);
-    unsigned long ossl = ERR_get_error();
-    char buf[256] = {0};
-    if (ossl) ERR_error_string_n(ossl, buf, sizeof(buf));
-
-    std::string msg = op;
+// Format SSL error message
+[[nodiscard]] std::string ssl_error_message(SSL* ssl, int rc, const char* op) {
+    const int ssl_err{SSL_get_error(ssl, rc)};
+    const unsigned long ossl{ERR_get_error()};
+    
+    std::array<char, 256> buf{};
+    if (ossl) {
+        ERR_error_string_n(ossl, buf.data(), buf.size());
+    }
+    
+    std::string msg{op};
     msg += " err=" + std::to_string(ssl_err);
     if (buf[0]) {
         msg += " ";
-        msg += buf;
+        msg += buf.data();
     }
     return msg;
 }
 
 #ifdef _WIN32
-bool load_windows_root_cas_into_store(X509_STORE* store) {
+// Load Windows root CAs into X509 store
+[[nodiscard]] bool load_windows_root_cas_into_store(X509_STORE* store) {
     if (!store) return false;
 
-    HCERTSTORE cert_store = CertOpenSystemStoreA(0, "ROOT");
+    HCERTSTORE cert_store{CertOpenSystemStoreA(0, "ROOT")};
     if (!cert_store) return false;
 
-    bool loaded_any = false;
-    PCCERT_CONTEXT cert_ctx = nullptr;
+    bool loaded_any{false};
+    PCCERT_CONTEXT cert_ctx{nullptr};
 
     while ((cert_ctx = CertEnumCertificatesInStore(cert_store, cert_ctx)) != nullptr) {
-        const unsigned char* p = cert_ctx->pbCertEncoded;
-        X509* x = d2i_X509(nullptr, &p, cert_ctx->cbCertEncoded);
+        const unsigned char* p{cert_ctx->pbCertEncoded};
+        X509* x{d2i_X509(nullptr, &p, cert_ctx->cbCertEncoded)};
         if (!x) continue;
 
         if (X509_STORE_add_cert(store, x) == 1) {
             loaded_any = true;
         } else {
-            unsigned long e = ERR_peek_last_error();
+            const unsigned long e{ERR_peek_last_error()};
             if (ERR_GET_REASON(e) == X509_R_CERT_ALREADY_IN_HASH_TABLE) {
                 loaded_any = true;
                 ERR_clear_error();
@@ -120,25 +142,28 @@ bool load_windows_root_cas_into_store(X509_STORE* store) {
 }
 #endif
 
-bool configure_tls_ctx(SSL_CTX* ctx) {
+// Configure TLS context with trust store
+[[nodiscard]] bool configure_tls_ctx(SSL_CTX* ctx) {
     if (!ctx) return false;
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
 
-    bool trust_loaded = false;
+    bool trust_loaded{false};
 
-    static const char* kCaBundleCandidates[] = {
+    // Try common CA bundle locations
+    constexpr std::array<const char*, 5> kCaBundleCandidates{{
         "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
         "/etc/pki/tls/certs/ca-bundle.crt",
         "/etc/ssl/certs/ca-certificates.crt",
         "/etc/ssl/ca-bundle.pem",
         "/etc/ssl/cert.pem",
-    };
+    }};
 
     for (const char* path : kCaBundleCandidates) {
         if (!path || !*path) continue;
-        FILE* fp = std::fopen(path, "rb");
+        
+        FILE* fp{std::fopen(path, "rb")};
         if (!fp) continue;
         std::fclose(fp);
 
@@ -158,99 +183,126 @@ bool configure_tls_ctx(SSL_CTX* ctx) {
 
 #ifdef _WIN32
     if (!trust_loaded) ERR_clear_error();
-    X509_STORE* store = SSL_CTX_get_cert_store(ctx);
-    if (load_windows_root_cas_into_store(store)) trust_loaded = true;
+    X509_STORE* store{SSL_CTX_get_cert_store(ctx)};
+    if (load_windows_root_cas_into_store(store)) {
+        trust_loaded = true;
+    }
 #endif
 
     return trust_loaded;
 }
 
+// RAII wrapper for SSL_CTX
+struct SslCtxDeleter {
+    void operator()(SSL_CTX* ctx) const noexcept {
+        if (ctx) SSL_CTX_free(ctx);
+    }
+};
+using SslCtxPtr = std::unique_ptr<SSL_CTX, SslCtxDeleter>;
+
+// RAII wrapper for SSL
+struct SslDeleter {
+    void operator()(SSL* ssl) const noexcept {
+        if (ssl) SSL_free(ssl);
+    }
+};
+using SslPtr = std::unique_ptr<SSL, SslDeleter>;
+
 } // namespace
 
-HttpResp http_get(const std::string& url, int timeout_ms) {
-    HttpResp r;
-    auto t0 = std::chrono::steady_clock::now();
+[[nodiscard]] HttpResp http_get(std::string_view url, int timeout_ms) {
+    HttpResp result;
+    const auto start_time{std::chrono::steady_clock::now()};
 
+    // Initialize OpenSSL
     std::string ossl_err;
     if (!openssl_runtime_init(&ossl_err)) {
-        r.err = "openssl_init " + ossl_err;
-        return r;
+        result.err = "openssl_init " + ossl_err;
+        return result;
     }
 
+    // Parse URL
     std::string host;
-    std::string path = "/";
-    int port = 80;
-    bool is_https = false;
+    std::string path{"/"};
+    int port{80};
+    bool is_https{false};
 
-    std::string u = url;
-    if (starts_with(u, "https://")) {
+    std::string_view u{url};
+    if (u.starts_with("https://")) {
         is_https = true;
         port = 443;
         u = u.substr(8);
-    } else if (starts_with(u, "http://")) {
+    } else if (u.starts_with("http://")) {
         u = u.substr(7);
     } else {
-        r.err = "bad url scheme";
-        return r;
+        result.err = "bad url scheme";
+        return result;
     }
 
-    const size_t slash_pos = u.find('/');
-    const size_t query_pos = u.find('?');
-    const size_t frag_pos = u.find('#');
+    // Find path/query/fragment separator
+    const auto slash_pos{u.find('/')};
+    const auto query_pos{u.find('?')};
+    const auto frag_pos{u.find('#')};
 
-    size_t split_pos = slash_pos;
-    if (query_pos != std::string::npos && (split_pos == std::string::npos || query_pos < split_pos)) {
+    auto split_pos{slash_pos};
+    if (query_pos != std::string_view::npos && 
+        (split_pos == std::string_view::npos || query_pos < split_pos)) {
         split_pos = query_pos;
     }
-    if (frag_pos != std::string::npos && (split_pos == std::string::npos || frag_pos < split_pos)) {
+    if (frag_pos != std::string_view::npos && 
+        (split_pos == std::string_view::npos || frag_pos < split_pos)) {
         split_pos = frag_pos;
     }
 
-    if (split_pos != std::string::npos) {
-        host = u.substr(0, split_pos);
-        path = u.substr(split_pos);
+    if (split_pos != std::string_view::npos) {
+        host = std::string{u.substr(0, split_pos)};
+        path = std::string{u.substr(split_pos)};
         if (path[0] != '/') {
             path = "/" + path;
         }
     } else {
-        host = u;
+        host = std::string{u};
     }
 
     if (host.empty()) {
-        r.err = "bad host";
-        return r;
+        result.err = "bad host";
+        return result;
     }
 
+    // Handle IPv6 addresses in brackets
     if (host[0] == '[') {
-        size_t close = host.find(']');
+        const auto close{host.find(']')};
         if (close == std::string::npos) {
-            r.err = "bad host";
-            return r;
+            result.err = "bad host";
+            return result;
         }
         if (close + 1 < host.size()) {
             if (host[close + 1] != ':') {
-                r.err = "bad host";
-                return r;
+                result.err = "bad host";
+                return result;
             }
-            if (!parse_http_port(host.substr(close + 2), port)) {
-                r.err = "bad port";
-                return r;
+            if (!parse_http_port(std::string_view{host}.substr(close + 2), port)) {
+                result.err = "bad port";
+                return result;
             }
         }
         host = host.substr(1, close - 1);
     } else {
-        size_t first_col = host.find(':');
-        size_t last_col = host.rfind(':');
+        // Parse port from host:port
+        const auto first_col{host.find(':')};
+        const auto last_col{host.rfind(':')};
         if (first_col != std::string::npos && first_col == last_col) {
-            std::string ps = host.substr(last_col + 1);
-            bool all_digits = !ps.empty();
+            std::string_view ps{std::string_view{host}.substr(last_col + 1)};
+            bool all_digits{!ps.empty()};
             for (char c : ps) {
-                if (!std::isdigit((unsigned char)c)) all_digits = false;
+                if (!std::isdigit(static_cast<unsigned char>(c))) {
+                    all_digits = false;
+                }
             }
             if (all_digits) {
                 if (!parse_http_port(ps, port)) {
-                    r.err = "bad port";
-                    return r;
+                    result.err = "bad port";
+                    return result;
                 }
                 host.erase(last_col);
             }
@@ -258,246 +310,197 @@ HttpResp http_get(const std::string& url, int timeout_ms) {
     }
 
     if (host.empty()) {
-        r.err = "bad host";
-        return r;
+        result.err = "bad host";
+        return result;
     }
 
-    SOCKET s = INVALID_SOCKET;
-    auto close_socket = [&]() {
-        if (s != INVALID_SOCKET) {
-            closesocket(s);
-            s = INVALID_SOCKET;
-        }
-    };
-
-    auto connect_socket = [&]() -> bool {
-        std::string err;
-        s = tcp_connect(host, port, timeout_ms, err);
-        if (s == INVALID_SOCKET) {
-            r.err = "connect " + err;
-            return false;
-        }
-        set_socket_timeouts(s, timeout_ms);
-        return true;
-    };
-
-    if (!connect_socket()) {
-        return r;
+    // Connect to server
+    std::string conn_err;
+    SOCKET s{tcp_connect(host, port, timeout_ms, conn_err)};
+    if (s == INVALID_SOCKET) {
+        result.err = "connect " + conn_err;
+        return result;
     }
+    
+    SocketGuard socket_guard{s};
+    set_socket_timeouts(s, timeout_ms);
 
-    SSL_CTX* raw_ctx = nullptr;
-    SSL* raw_ssl = nullptr;
+    SslCtxPtr ctx;
+    SslPtr ssl;
 
     if (is_https) {
-        raw_ctx = SSL_CTX_new(TLS_client_method());
+        SSL_CTX* raw_ctx{SSL_CTX_new(TLS_client_method())};
         if (!raw_ctx) {
-            r.err = "ssl_ctx_new";
-            close_socket();
-            return r;
+            result.err = "ssl_ctx_new";
+            return result;
+        }
+        ctx.reset(raw_ctx);
+
+        if (!configure_tls_ctx(ctx.get())) {
+            result.err = "ssl_trust_store";
+            return result;
         }
 
-        if (!configure_tls_ctx(raw_ctx)) {
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            r.err = "ssl_trust_store";
-            close_socket();
-            return r;
-        }
-
-        raw_ssl = SSL_new(raw_ctx);
+        SSL* raw_ssl{SSL_new(ctx.get())};
         if (!raw_ssl) {
-            r.err = "ssl_new";
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            close_socket();
-            return r;
+            result.err = "ssl_new";
+            return result;
+        }
+        ssl.reset(raw_ssl);
+
+        if (!ssl_attach_socket(ssl.get(), s, &result.err)) {
+            result.err = "ssl_set_fd " + result.err;
+            return result;
         }
 
-        if (!ssl_attach_socket(raw_ssl, s, &r.err)) {
-            r.err = "ssl_set_fd " + r.err;
-            SSL_free(raw_ssl);
-            raw_ssl = nullptr;
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            close_socket();
-            return r;
-        }
-
-        const bool is_ip = is_ip_literal(host);
+        const bool is_ip{is_ip_literal(host)};
 
         if (!is_ip) {
-            if (SSL_set_tlsext_host_name(raw_ssl, host.c_str()) != 1) {
-                r.err = "ssl_set_sni";
-                SSL_free(raw_ssl);
-                raw_ssl = nullptr;
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-                close_socket();
-                return r;
+            if (SSL_set_tlsext_host_name(ssl.get(), host.c_str()) != 1) {
+                result.err = "ssl_set_sni";
+                return result;
             }
         }
 
-        X509_VERIFY_PARAM* param = SSL_get0_param(raw_ssl);
+        X509_VERIFY_PARAM* param{SSL_get0_param(ssl.get())};
         if (!param) {
-            r.err = "ssl_get_param";
-            SSL_free(raw_ssl);
-            raw_ssl = nullptr;
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            close_socket();
-            return r;
+            result.err = "ssl_get_param";
+            return result;
         }
 
         if (is_ip) {
             if (X509_VERIFY_PARAM_set1_ip_asc(param, host.c_str()) != 1) {
-                r.err = "ssl_set_ip";
-                SSL_free(raw_ssl);
-                raw_ssl = nullptr;
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-                close_socket();
-                return r;
+                result.err = "ssl_set_ip";
+                return result;
             }
         } else {
             if (X509_VERIFY_PARAM_set1_host(param, host.c_str(), host.size()) != 1) {
-                r.err = "ssl_set_host";
-                SSL_free(raw_ssl);
-                raw_ssl = nullptr;
-                SSL_CTX_free(raw_ctx);
-                raw_ctx = nullptr;
-                close_socket();
-                return r;
+                result.err = "ssl_set_host";
+                return result;
             }
         }
 
-        const int conn_rc = SSL_connect(raw_ssl);
+        const int conn_rc{SSL_connect(ssl.get())};
         if (conn_rc != 1) {
-            r.err = ssl_error_message(raw_ssl, conn_rc, "ssl_connect");
-            SSL_free(raw_ssl);
-            raw_ssl = nullptr;
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            close_socket();
-            return r;
+            result.err = ssl_error_message(ssl.get(), conn_rc, "ssl_connect");
+            return result;
         }
 
-        long verify = SSL_get_verify_result(raw_ssl);
+        const long verify{SSL_get_verify_result(ssl.get())};
         if (verify != X509_V_OK) {
-            r.err = "ssl_verify " + std::to_string(verify);
-            SSL_free(raw_ssl);
-            raw_ssl = nullptr;
-            SSL_CTX_free(raw_ctx);
-            raw_ctx = nullptr;
-            close_socket();
-            return r;
+            result.err = "ssl_verify " + std::to_string(verify);
+            return result;
         }
     }
 
-    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> ctx(raw_ctx, SSL_CTX_free);
-    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(raw_ssl, SSL_free);
-
-    const std::string req = "GET " + path + " HTTP/1.1\r\n"
-                            "Host: " + host + "\r\n"
-                            "Connection: close\r\n"
-                            "User-Agent: byebyevpn/3\r\n"
-                            "Accept: */*\r\n"
-                            "\r\n";
+    // Build and send request
+    const std::string req{
+        "GET " + path + " HTTP/1.1\r\n"
+        "Host: " + host + "\r\n"
+        "Connection: close\r\n"
+        "User-Agent: byebyevpn/3\r\n"
+        "Accept: */*\r\n"
+        "\r\n"
+    };
 
     if (is_https) {
-        int wrote = SSL_write(ssl.get(), req.data(), (int)req.size());
+        const int wrote{SSL_write(ssl.get(), req.data(), static_cast<int>(req.size()))};
         if (wrote <= 0) {
-            r.err = ssl_error_message(ssl.get(), wrote, "ssl_write");
-            closesocket(s);
-            return r;
+            result.err = ssl_error_message(ssl.get(), wrote, "ssl_write");
+            return result;
         }
-        if (wrote != (int)req.size()) {
-            r.err = "ssl_write partial";
-            closesocket(s);
-            return r;
+        if (wrote != static_cast<int>(req.size())) {
+            result.err = "ssl_write partial";
+            return result;
         }
     } else {
-        int sent = tcp_send_all(s, req.data(), (int)req.size());
-        if (sent != (int)req.size()) {
-            r.err = "send " + std::to_string(WSAGetLastError());
-            closesocket(s);
-            return r;
+        const int sent{tcp_send_all(s, req.data(), static_cast<int>(req.size()))};
+        if (sent != static_cast<int>(req.size())) {
+            result.err = "send " + std::to_string(WSAGetLastError());
+            return result;
         }
     }
 
+    // Read response
     std::string resp_data;
-    char buf[4096] = {0};
+    std::array<char, 4096> buf{};
+    
     while (true) {
-        int got = 0;
+        int got{0};
         if (is_https) {
-            got = SSL_read(ssl.get(), buf, sizeof(buf));
+            got = SSL_read(ssl.get(), buf.data(), static_cast<int>(buf.size()));
             if (got <= 0) {
-                int se = SSL_get_error(ssl.get(), got);
+                const int se{SSL_get_error(ssl.get(), got)};
                 if (se == SSL_ERROR_ZERO_RETURN) {
                     break;
                 }
                 if (se == SSL_ERROR_WANT_READ || se == SSL_ERROR_WANT_WRITE) {
                     continue;
                 }
-                r.err = ssl_error_message(ssl.get(), got, "ssl_read");
-                closesocket(s);
-                return r;
+                result.err = ssl_error_message(ssl.get(), got, "ssl_read");
+                return result;
             }
         } else {
-            got = tcp_recv_to(s, buf, sizeof(buf), timeout_ms);
+            got = tcp_recv_to(s, buf.data(), static_cast<int>(buf.size()), timeout_ms);
             if (got <= 0) break;
         }
 
-        resp_data.append(buf, got);
-        if (resp_data.size() > 1024 * 1024) break;
+        resp_data.append(buf.data(), static_cast<std::size_t>(got));
+        if (resp_data.size() > kMaxResponseSize) break;
     }
 
-    closesocket(s);
-
-    const size_t header_end = resp_data.find("\r\n\r\n");
+    // Parse response
+    const auto header_end{resp_data.find("\r\n\r\n")};
     if (header_end != std::string::npos) {
-        std::string headers = resp_data.substr(0, header_end);
-        r.body = resp_data.substr(header_end + 4);
+        std::string headers{resp_data.substr(0, header_end)};
+        result.body = resp_data.substr(header_end + 4);
 
-        const size_t space1 = headers.find(' ');
+        // Parse status code
+        const auto space1{headers.find(' ')};
         if (space1 != std::string::npos) {
-            const size_t space2 = headers.find(' ', space1 + 1);
+            const auto space2{headers.find(' ', space1 + 1)};
             if (space2 != std::string::npos) {
-                std::string status_str = headers.substr(space1 + 1, space2 - space1 - 1);
-                char* end = nullptr;
-                long val = std::strtol(status_str.c_str(), &end, 10);
-                if (end != status_str.c_str()) {
-                    r.status = static_cast<int>(val);
-                } else {
-                    r.status = 0;
+                std::string_view status_str{
+                    std::string_view{headers}.substr(space1 + 1, space2 - space1 - 1)
+                };
+                char* endptr{nullptr};
+                const std::string status_str_s{status_str};
+                const long val{std::strtol(status_str_s.c_str(), &endptr, 10)};
+                if (endptr != status_str_s.c_str()) {
+                    result.status = static_cast<int>(val);
                 }
             }
         }
 
-        std::string h_lower = tolower_s(headers);
+        // Handle chunked transfer encoding
+        const std::string h_lower{tolower_s(headers)};
         if (h_lower.find("transfer-encoding: chunked") != std::string::npos) {
             std::string decoded;
-            size_t pos = 0;
-            while (pos < r.body.size()) {
-                size_t nl = r.body.find("\r\n", pos);
+            std::size_t pos{0};
+            while (pos < result.body.size()) {
+                const auto nl{result.body.find("\r\n", pos)};
                 if (nl == std::string::npos) break;
-                std::string hex_len = r.body.substr(pos, nl - pos);
-                char* end = nullptr;
-                long len = std::strtol(hex_len.c_str(), &end, 16);
-                if (end == hex_len.c_str() || len < 0) break;
+                
+                const std::string hex_len{result.body.substr(pos, nl - pos)};
+                char* endptr{nullptr};
+                const long len{std::strtol(hex_len.c_str(), &endptr, 16)};
+                if (endptr == hex_len.c_str() || len < 0) break;
                 if (len == 0) break;
+                
                 pos = nl + 2;
-                if (pos + len > r.body.size()) break;
-                decoded.append(r.body.substr(pos, len));
-                pos += len + 2;
+                if (pos + static_cast<std::size_t>(len) > result.body.size()) break;
+                decoded.append(result.body.substr(pos, static_cast<std::size_t>(len)));
+                pos += static_cast<std::size_t>(len) + 2;
             }
-            r.body = decoded;
+            result.body = std::move(decoded);
         }
     } else {
-        r.err = "no header";
+        result.err = "no header";
     }
 
-    r.ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::steady_clock::now() - t0)
-                      .count());
-    return r;
+    result.ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time
+    ).count();
+    
+    return result;
 }

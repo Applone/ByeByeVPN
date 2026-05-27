@@ -1,9 +1,9 @@
-#ifndef ANALYSIS_VERDICT_H
-#define ANALYSIS_VERDICT_H
+#pragma once
 
 #include <optional>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include "../network/dns.h"
 #include "../network/https_probe.h"
@@ -16,8 +16,7 @@
 #include "geoip.h"
 #include "sni_consistency.h"
 
-using std::optional;
-
+// JA3 fingerprint information
 struct Ja3Info {
     std::string version;
     std::string ciphers;
@@ -27,12 +26,13 @@ struct Ja3Info {
     std::string ja3_hash;
 };
 
-
+// Advisory information
 struct Advice {
     std::string kind;
     std::string text;
 };
 
+// Full analysis report
 struct FullReport {
     std::string target;
     Resolved dns;
@@ -40,23 +40,27 @@ struct FullReport {
     std::vector<TcpOpen> open_tcp;
     std::vector<std::pair<int, UdpResult>> udp_probes;
 
+    // Per-port fingerprinting results
     struct PortFp {
-        int port;
+        int port{0};
         FpResult fp;
-        optional<TlsProbe> tls;
-        optional<SniConsistency> sni;
+        std::optional<TlsProbe> tls;
+        std::optional<SniConsistency> sni;
         std::vector<J3Result> j3;
-        optional<J3Analysis> j3a;
-        optional<HttpsProbe> https;
-        optional<CtCheck> ct;
+        std::optional<J3Analysis> j3a;
+        std::optional<HttpsProbe> https;
+        std::optional<CtCheck> ct;
     };
 
     std::vector<PortFp> fps;
     ScanStats scan_stats;
-    int score = 0;
+    int score{0};
     std::string label;
     std::vector<Advice> advices;
     std::vector<std::string> guess_stack;
+    
+    // Check if report indicates VPN-like behavior
+    [[nodiscard]] bool vpn_detected() const noexcept {
+        return score >= 50;  // Threshold for VPN detection
+    }
 };
-
-#endif // ANALYSIS_VERDICT_H

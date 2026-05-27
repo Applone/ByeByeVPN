@@ -5,47 +5,70 @@
 #include <array>
 #include <limits>
 #include <vector>
+#include <algorithm>
+#include <span>
 
 namespace {
 
-UdpResult rng_error() {
-    UdpResult r;
-    r.err = "rng";
-    return r;
+// Constants
+inline constexpr std::size_t kWireGuardPacketSize{148};
+inline constexpr std::size_t kWireGuardRandomOffset{4};
+inline constexpr std::size_t kWireGuardRandomSize{140};
+inline constexpr std::size_t kMaxJunkPrefixLen{64};
+inline constexpr int kProbeTimeoutMs{1500};
+
+// Create RNG error result
+[[nodiscard]] UdpResult make_rng_error() {
+    UdpResult result;
+    result.err = "rng";
+    return result;
 }
 
-bool fill_random(unsigned char* data, const std::size_t size) {
-    if (!data || size == 0) return false;
-    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
-    return RAND_bytes(data, static_cast<int>(size)) == 1;
+// Fill buffer with random bytes using OpenSSL
+[[nodiscard]] bool fill_random(std::span<unsigned char> data) noexcept {
+    if (data.empty()) return false;
+    if (data.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
+    return RAND_bytes(data.data(), static_cast<int>(data.size())) == 1;
 }
 
 } // namespace
 
-UdpResult wireguard_probe(const std::string& host, int port) {
-    std::array<unsigned char, 148> pkt{};
-    pkt[0] = 0x01; // MessageInitiation
-
-    if (!fill_random(pkt.data() + 4, 140)) {
-        return rng_error();
+[[nodiscard]] UdpResult wireguard_probe(std::string_view host, int port) {
+    std::array<unsigned char, kWireGuardPacketSize> pkt{};
+    
+    // Set message type: MessageInitiation (0x01)
+    pkt[0] = 0x01;
+    
+    // Fill random data starting at offset 4
+    if (!fill_random(std::span{pkt.data() + kWireGuardRandomOffset, kWireGuardRandomSize})) {
+        return make_rng_error();
     }
-
-    return udp_probe(host, port, pkt.data(), static_cast<int>(pkt.size()), 1500);
+    
+    return udp_probe(host, port, std::span{pkt}, kProbeTimeoutMs);
 }
 
-UdpResult amneziawg_probe(const std::string& host, int port, std::size_t junk_prefix_len) {
-    if (junk_prefix_len > 64) junk_prefix_len = 64;
-
-    std::vector<unsigned char> pkt(junk_prefix_len + 148, 0);
-
-    if (junk_prefix_len > 0 && !fill_random(pkt.data(), junk_prefix_len)) {
-        return rng_error();
+[[nodiscard]] UdpResult amneziawg_probe(std::string_view host, int port, std::size_t junk_prefix_len) {
+    // Clamp junk prefix length
+    const std::size_t actual_junk_len{std::min(junk_prefix_len, kMaxJunkPrefixLen)};
+    const std::size_t total_size{actual_junk_len + kWireGuardPacketSize};
+    
+    std::vector<unsigned char> pkt(total_size, 0);
+    
+    // Fill junk prefix with random data
+    if (actual_junk_len > 0) {
+        if (!fill_random(std::span{pkt.data(), actual_junk_len})) {
+            return make_rng_error();
+        }
     }
-
-    pkt[junk_prefix_len] = 0x01; // MessageInitiation after junk prefix
-    if (!fill_random(pkt.data() + junk_prefix_len + 4, 140)) {
-        return rng_error();
+    
+    // Set message type after junk prefix
+    pkt[actual_junk_len] = 0x01;
+    
+    // Fill random data for WireGuard payload
+    if (!fill_random(std::span{pkt.data() + actual_junk_len + kWireGuardRandomOffset, 
+                               kWireGuardRandomSize})) {
+        return make_rng_error();
     }
-
-    return udp_probe(host, port, pkt.data(), static_cast<int>(pkt.size()), 1500);
+    
+    return udp_probe(host, port, std::span{pkt}, kProbeTimeoutMs);
 }

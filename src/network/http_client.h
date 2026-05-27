@@ -1,17 +1,29 @@
-#ifndef NETWORK_HTTP_CLIENT_H
-#define NETWORK_HTTP_CLIENT_H
+#pragma once
 
 #include <string>
+#include <string_view>
+#include <cstdint>
 
+// HTTP response structure
 struct HttpResp {
-    int status = 0;
+    int status{0};
     std::string body;
     std::string err;
-    long long ms = 0;
-    bool ok() const { return status >= 200 && status < 400; }
+    std::int64_t ms{0};
+    
+    // Rule of Zero - compiler generates all special members
+    
+    // Check if response indicates success (2xx or 3xx)
+    [[nodiscard]] constexpr bool ok() const noexcept {
+        return status >= 200 && status < 400;
+    }
+    
+    // Check if response is a success (2xx only)
+    [[nodiscard]] constexpr bool success() const noexcept {
+        return status >= 200 && status < 300;
+    }
 };
 
-HttpResp http_get(const std::string& url,
-                  int timeout_ms = 7000);
-
-#endif // NETWORK_HTTP_CLIENT_H
+// Perform HTTP GET request
+// Supports both HTTP and HTTPS with certificate verification
+[[nodiscard]] HttpResp http_get(std::string_view url, int timeout_ms = 7000);

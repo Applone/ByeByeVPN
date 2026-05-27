@@ -37,4 +37,18 @@ byebyevpn_apply_common_warnings(byebyevpn_tests)
 byebyevpn_apply_sanitizers(byebyevpn_tests)
 byebyevpn_apply_runtime_link_options(byebyevpn_tests)
 
-add_test(NAME byebyevpn_tests COMMAND byebyevpn_tests)
+if(BYEBYEVPN_TEST_SHARDS LESS 1)
+    set(BYEBYEVPN_TEST_SHARDS 1)
+endif()
+
+if(BYEBYEVPN_TEST_SHARDS EQUAL 1)
+    add_test(NAME byebyevpn_tests COMMAND byebyevpn_tests)
+else()
+    math(EXPR BYEBYEVPN_LAST_TEST_SHARD "${BYEBYEVPN_TEST_SHARDS} - 1")
+    foreach(shard RANGE 0 ${BYEBYEVPN_LAST_TEST_SHARD})
+        add_test(
+            NAME byebyevpn_tests_shard_${shard}
+            COMMAND byebyevpn_tests --shard-count ${BYEBYEVPN_TEST_SHARDS} --shard-index ${shard}
+        )
+    endforeach()
+endif()

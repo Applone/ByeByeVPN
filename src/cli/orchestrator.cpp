@@ -13,7 +13,9 @@
 #include <algorithm>
 #include <array>
 #include <future>
+#include <ranges>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -43,22 +45,22 @@ constexpr std::array<int, 8> kHttpPorts{{80, 81, 8080, 8081, 8088, 8888, 3128, 8
 constexpr std::array<int, 8> kSocksPorts{{1080, 1081, 1082, 9050, 10808, 10809, 10810, 7890}};
 
 template <size_t N>
-bool in_ports(const int port, const std::array<int, N>& ports) {
-    return std::find(ports.begin(), ports.end(), port) != ports.end();
+[[nodiscard]] constexpr bool in_ports(const int port, const std::array<int, N>& ports) noexcept {
+    return std::ranges::find(ports, port) != ports.end();
 }
 
-bool is_tls_port(const int port) {
+[[nodiscard]] constexpr bool is_tls_port(const int port) noexcept {
     return in_ports(port, kTlsPorts);
 }
 
-bool has_token(const std::string& value, const std::vector<std::string>& needles) {
-    const std::string low = tolower_s(value);
-    return std::any_of(needles.begin(), needles.end(), [&](const std::string& n) {
+[[nodiscard]] bool has_token(std::string_view value, std::span<const std::string> needles) {
+    const std::string low = tolower_s(std::string{value});
+    return std::ranges::any_of(needles, [&](std::string_view n) {
         return contains(low, n);
     });
 }
 
-bool is_known_cdn_asn(const std::string& asn_org) {
+[[nodiscard]] bool is_known_cdn_asn(std::string_view asn_org) {
     static const std::vector<std::string> kCdnAsnNeedles = {
         "cloudflare",
         "akamai",
@@ -84,7 +86,7 @@ bool is_known_cdn_asn(const std::string& asn_org) {
     return has_token(asn_org, kCdnAsnNeedles);
 }
 
-bool looks_like_cdn_lb(const FullReport::PortFp& pf, const std::vector<std::string>& asn_orgs) {
+[[nodiscard]] bool looks_like_cdn_lb(const FullReport::PortFp& pf, std::span<const std::string> asn_orgs) {
     static const std::vector<std::string> kServerNeedles = {
         "envoy",
         "cloudflare",
@@ -98,7 +100,7 @@ bool looks_like_cdn_lb(const FullReport::PortFp& pf, const std::vector<std::stri
         "edge"
     };
 
-    if (std::any_of(asn_orgs.begin(), asn_orgs.end(), [](const std::string& org) { return is_known_cdn_asn(org); })) {
+    if (std::ranges::any_of(asn_orgs, [](std::string_view org) { return is_known_cdn_asn(org); })) {
         return true;
     }
 
@@ -135,16 +137,16 @@ struct ScoreBook {
     }
 };
 
-GeoInfo safe_get_geo(std::future<GeoInfo>& f, const char* source) {
+[[nodiscard]] GeoInfo safe_get_geo(std::future<GeoInfo>& f, std::string_view source) {
     try {
         return f.get();
     } catch (const std::exception& e) {
-        GeoInfo g;
+        GeoInfo g{};
         g.source = source;
         g.err = e.what();
         return g;
     } catch (...) {
-        GeoInfo g;
+        GeoInfo g{};
         g.source = source;
         g.err = "unknown exception";
         return g;
@@ -186,9 +188,9 @@ void print_geo_line(const GeoInfo& g) {
 
 } // namespace
 
-FullReport run_full_target(const std::string& target) {
-    FullReport R;
-    R.target = target;
+FullReport run_full_target(std::string_view target) {
+    FullReport R{};
+    R.target = std::string{target};
 
     tee_printf("\n%s[1/7] DNS resolve%s\n", col(C::BOLD), col(C::RST));
     R.dns = resolve_host(target);
@@ -197,11 +199,11 @@ FullReport run_full_target(const std::string& target) {
         return R;
     }
 
-    tee_printf("  %s%s%s  ->  ", col(C::WHT), target.c_str(), col(C::RST));
+    tee_printf("  %s%s%s  ->  ", col(C::WHT), R.target.c_str(), col(C::RST));
     for (const auto& ip : R.dns.ips) tee_printf("%s ", ip.c_str());
     tee_printf("[%s, %lldms]\n", R.dns.family.c_str(), R.dns.ms);
 
-    if (R.dns.primary_ip != target) {
+    if (R.dns.primary_ip != R.target) {
         tee_printf("  %susing primary IP%s %s%s%s for all probes\n",
                    col(C::DIM), col(C::RST),
                    col(C::BOLD), R.dns.primary_ip.c_str(), col(C::RST));
@@ -479,9 +481,7 @@ FullReport run_full_target(const std::string& target) {
         book.strong_signal("AmneziaWG handshake accepted on UDP/55555 (obfuscated WG profile)", 18);
     }
 
-    const int hosting_hits = static_cast<int>(std::count_if(R.geos.begin(), R.geos.end(), [](const GeoInfo& g) {
-        return g.is_hosting;
-    }));
+    const auto hosting_hits = static_cast<int>(std::ranges::count_if(R.geos, &GeoInfo::is_hosting));
 
     if (hosting_hits > 0) {
         book.note("asn-hosting", "hosting/datacenter ASN is normal for public infrastructure");

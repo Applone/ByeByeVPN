@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <memory>
+#include <array>
+#include <ranges>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -13,82 +15,139 @@
 #include <sys/socket.h>
 #endif
 
-static std::string sa_ip(const sockaddr* sa) {
-    char buf[INET6_ADDRSTRLEN] = {0};
-    if (sa->sa_family == AF_INET) {
-        auto* s4 = reinterpret_cast<const sockaddr_in*>(sa);
-        inet_ntop(AF_INET, &s4->sin_addr, buf, sizeof(buf));
-    } else {
-        auto* s6 = reinterpret_cast<const sockaddr_in6*>(sa);
-        inet_ntop(AF_INET6, &s6->sin6_addr, buf, sizeof(buf));
+namespace {
+
+// RAII wrapper for addrinfo
+struct AddrInfoDeleter {
+    void operator()(addrinfo* ai) const noexcept {
+        if (ai) ::freeaddrinfo(ai);
     }
-    return buf;
+};
+using AddrInfoPtr = std::unique_ptr<addrinfo, AddrInfoDeleter>;
+
+// Extract IP string from sockaddr
+[[nodiscard]] std::string extract_ip(const sockaddr* sa) {
+    std::array<char, INET6_ADDRSTRLEN> buf{};
+    
+    if (sa->sa_family == AF_INET) {
+        const auto* s4{reinterpret_cast<const sockaddr_in*>(sa)};
+        inet_ntop(AF_INET, &s4->sin_addr, buf.data(), buf.size());
+    } else if (sa->sa_family == AF_INET6) {
+        const auto* s6{reinterpret_cast<const sockaddr_in6*>(sa)};
+        inet_ntop(AF_INET6, &s6->sin6_addr, buf.data(), buf.size());
+    }
+    
+    return std::string{buf.data()};
 }
 
-Resolved resolve_host(const std::string& host) {
-    Resolved r; r.host = host;
-    auto t0 = std::chrono::steady_clock::now();
-    auto elapsed_ms = [&]() -> long long {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now() - t0).count();
-    };
+// Check if string is an IPv4 address
+[[nodiscard]] bool is_ipv4(std::string_view s) {
+    sockaddr_in sa{};
+    return inet_pton(AF_INET, std::string{s}.c_str(), &sa.sin_addr) == 1;
+}
 
-    // Bypass DNS if host is already an IP address
-    struct sockaddr_in sa4;
-    struct sockaddr_in6 sa6;
-    if (inet_pton(AF_INET, host.c_str(), &(sa4.sin_addr)) == 1) {
-        r.ips.push_back(host);
-        r.primary_ip = host;
-        r.family = "v4";
-        r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-        return r;
-    } else if (inet_pton(AF_INET6, host.c_str(), &(sa6.sin6_addr)) == 1) {
-        r.ips.push_back(host);
-        r.primary_ip = host;
-        r.family = "v6";
-        r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-        return r;
-    }
+// Check if string is an IPv6 address
+[[nodiscard]] bool is_ipv6(std::string_view s) {
+    sockaddr_in6 sa{};
+    return inet_pton(AF_INET6, std::string{s}.c_str(), &sa.sin6_addr) == 1;
+}
 
-    addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
-    addrinfo* ai = nullptr;
-    int rc = getaddrinfo(host.c_str(), nullptr, &hints, &ai);
-    std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> ai_ptr(ai, freeaddrinfo);
-#ifdef _WIN32
-    if (rc != 0) { 
-        r.ms = elapsed_ms(); 
-        const char* err_str = gai_strerrorA(rc);
-        r.err = (err_str && err_str[0]) ? err_str : ("error " + std::to_string(rc)); 
-        return r; 
-    }
-#else
-    if (rc != 0) { 
-        r.ms = elapsed_ms(); 
-        const char* err_str = gai_strerror(rc);
-        r.err = (err_str && err_str[0]) ? err_str : ("error " + std::to_string(rc)); 
-        return r; 
-    }
-#endif
+} // namespace
+
+[[nodiscard]] Resolved resolve_host(std::string_view host) {
+    Resolved result;
+    result.host = std::string{host};
     
-    std::vector<std::string> v4_ips, v6_ips;
-    for (auto* p = ai_ptr.get(); p; p = p->ai_next) {
-        std::string ip = sa_ip(p->ai_addr);
+    const auto start_time{std::chrono::steady_clock::now()};
+    
+    auto elapsed_ms = [&]() -> std::int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_time
+        ).count();
+    };
+    
+    const std::string host_str{host};
+    
+    // Check if host is already an IP address (bypass DNS)
+    if (is_ipv4(host)) {
+        result.ips.push_back(host_str);
+        result.primary_ip = host_str;
+        result.family = "v4";
+        result.ms = elapsed_ms();
+        return result;
+    }
+    
+    if (is_ipv6(host)) {
+        result.ips.push_back(host_str);
+        result.primary_ip = host_str;
+        result.family = "v6";
+        result.ms = elapsed_ms();
+        return result;
+    }
+    
+    // Perform DNS resolution
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    
+    addrinfo* raw_ai{nullptr};
+    const int rc{::getaddrinfo(host_str.c_str(), nullptr, &hints, &raw_ai)};
+    AddrInfoPtr ai{raw_ai};
+    
+    if (rc != 0) {
+        result.ms = elapsed_ms();
+#ifdef _WIN32
+        const char* err_str{gai_strerrorA(rc)};
+#else
+        const char* err_str{gai_strerror(rc)};
+#endif
+        result.err = (err_str && err_str[0]) ? std::string{err_str} : ("error " + std::to_string(rc));
+        return result;
+    }
+    
+    // Collect IPv4 and IPv6 addresses separately
+    std::vector<std::string> v4_ips;
+    std::vector<std::string> v6_ips;
+    
+    for (const auto* p{ai.get()}; p; p = p->ai_next) {
+        std::string ip{extract_ip(p->ai_addr)};
+        
         if (p->ai_family == AF_INET) {
-            if (std::find(v4_ips.begin(), v4_ips.end(), ip) == v4_ips.end())
-                v4_ips.push_back(ip);
+            // Use ranges to check for duplicates
+            if (std::ranges::find(v4_ips, ip) == v4_ips.end()) {
+                v4_ips.push_back(std::move(ip));
+            }
         } else if (p->ai_family == AF_INET6) {
-            if (std::find(v6_ips.begin(), v6_ips.end(), ip) == v6_ips.end())
-                v6_ips.push_back(ip);
+            if (std::ranges::find(v6_ips, ip) == v6_ips.end()) {
+                v6_ips.push_back(std::move(ip));
+            }
         }
     }
-    for (const auto& s : v4_ips) r.ips.push_back(s);
-    for (const auto& s : v6_ips) r.ips.push_back(s);
-    if (!r.ips.empty()) r.primary_ip = r.ips.front();
-    bool has4 = !v4_ips.empty(), has6 = !v6_ips.empty();
-    r.family = (has4 && has6) ? "mixed(v4-preferred)"
-             : has4 ? "v4"
-             : has6 ? "v6" : "";
-    r.ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::steady_clock::now() - t0).count();
-    return r;
+    
+    // Build result: IPv4 first, then IPv6
+    for (auto& ip : v4_ips) {
+        result.ips.push_back(std::move(ip));
+    }
+    for (auto& ip : v6_ips) {
+        result.ips.push_back(std::move(ip));
+    }
+    
+    if (!result.ips.empty()) {
+        result.primary_ip = result.ips.front();
+    }
+    
+    // Determine address family
+    const bool has_v4{!v4_ips.empty()};
+    const bool has_v6{!v6_ips.empty()};
+    
+    if (has_v4 && has_v6) {
+        result.family = "mixed(v4-preferred)";
+    } else if (has_v4) {
+        result.family = "v4";
+    } else if (has_v6) {
+        result.family = "v6";
+    }
+    
+    result.ms = elapsed_ms();
+    return result;
 }

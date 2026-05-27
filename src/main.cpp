@@ -17,8 +17,11 @@
 #include <cstring>
 #include <future>
 #include <limits>
+#include <ranges>
 #include <set>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifndef _WIN32
@@ -52,12 +55,13 @@ public:
     }
 };
 
-bool try_parse_int(const string& s, int& out, const int min_v, const int max_v) {
+[[nodiscard]] bool try_parse_int(std::string_view s, int& out, const int min_v, const int max_v) {
     if (s.empty()) return false;
-    char* endptr = nullptr;
+    std::string str{s};
+    char* endptr{};
     errno = 0;
-    const long res = strtol(s.c_str(), &endptr, 10);
-    if (errno != 0 || endptr == s.c_str() || *endptr != '\0' || res < min_v || res > max_v) return false;
+    const long res = strtol(str.c_str(), &endptr, 10);
+    if (errno != 0 || endptr == str.c_str() || *endptr != '\0' || res < min_v || res > max_v) return false;
     out = static_cast<int>(res);
     return true;
 }
@@ -72,8 +76,8 @@ void clamp_threads_to_nofile_limit() {
 
     const rlim_t reserve = static_cast<rlim_t>(kNofileReserve);
     if (lim.rlim_cur <= reserve) {
-        if (g_threads != 1) {
-            g_threads = 1;
+        if (g_threads != kMinThreadCount) {
+            g_threads = kMinThreadCount;
             fprintf(stderr,
                     "warn: clamped --threads to %d due to RLIMIT_NOFILE soft=%llu (raise ulimit -n to allow more)\n",
                     g_threads,
@@ -98,16 +102,18 @@ void clamp_threads_to_nofile_limit() {
 #endif
 }
 
-int parse_int_fatal(const char* s, const char* name, const int min_v, const int max_v) {
-    int out = 0;
+[[nodiscard]] int parse_int_fatal(std::string_view s, std::string_view name, const int min_v, const int max_v) {
+    int out{};
     if (!try_parse_int(s, out, min_v, max_v)) {
-        fprintf(stderr, "Error: invalid value for %s: '%s' (expected %d-%d)\n", name, s, min_v, max_v);
+        std::string sstr{s};
+        std::string nstr{name};
+        fprintf(stderr, "Error: invalid value for %s: '%s' (expected %d-%d)\n", nstr.c_str(), sstr.c_str(), min_v, max_v);
         std::exit(1);
     }
     return out;
 }
 
-string extract_target_arg(const vector<string>& pos) {
+[[nodiscard]] string extract_target_arg(std::span<const string> pos) {
     if (pos.empty()) return {};
     static const set<string> cmds = {
         "scan", "full", "ports", "udp", "tls", "j3", "geoip", "help"
@@ -120,9 +126,9 @@ string extract_target_arg(const vector<string>& pos) {
     return pos[0];
 }
 
-string default_save_path_for_target(const string& target) {
+[[nodiscard]] string default_save_path_for_target(std::string_view target) {
     if (target.empty()) return "byebyevpn-scan.md";
-    string safe;
+    string safe{};
     for (const char c : target) {
         if (c == ':' || c == '/' || c == '\\' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
             safe += '_';
@@ -166,16 +172,16 @@ void print_geo(const GeoInfo& g) {
     if (!flags.empty()) tee_printf("               flags: %s\n", flags.c_str());
 }
 
-GeoInfo safe_get_geo(std::future<GeoInfo>& f, const std::string& source) {
+[[nodiscard]] GeoInfo safe_get_geo(std::future<GeoInfo>& f, std::string_view source) {
     try {
         return f.get();
     } catch (const std::exception& e) {
-        GeoInfo g;
+        GeoInfo g{};
         g.source = source;
         g.err = e.what();
         return g;
     } catch (...) {
-        GeoInfo g;
+        GeoInfo g{};
         g.source = source;
         g.err = "unknown exception";
         return g;
@@ -206,15 +212,15 @@ void help() {
     tee_printf("  byebyevpn geoip <ip>           GeoIP only\n\n");
 
     tee_printf("Port-scan modes (default: --full):\n");
-    tee_printf("  --full              scan ALL ports 1-65535  (default)\n");
+    tee_printf("  --full              scan ALL ports %d-%d  (default)\n", kMinPortNumber, kMaxPortNumber);
     tee_printf("  --fast              curated port subset\n");
     tee_printf("  --range 1000-2000   scan a port range\n");
     tee_printf("  --ports 80,443,8443 scan explicit port list\n\n");
 
     tee_printf("Tuning:\n");
-    tee_printf("  --threads N     parallel TCP connects   (default 1200)\n");
-    tee_printf("  --tcp-to MS     TCP connect timeout      (default 1000)\n");
-    tee_printf("  --udp-to MS     UDP recv timeout         (default 900)\n");
+    tee_printf("  --threads N     parallel TCP connects   (default %d)\n", kDefaultThreadCount);
+    tee_printf("  --tcp-to MS     TCP connect timeout      (default %d)\n", kDefaultTcpTimeoutMs);
+    tee_printf("  --udp-to MS     UDP recv timeout         (default %d)\n", kDefaultUdpTimeoutMs);
     tee_printf("  --syn           Linux-only TCP SYN half-open scan\n");
     tee_printf("  --no-color      disable ANSI colors\n");
     tee_printf("  -v / --verbose  verbose\n\n");
@@ -237,17 +243,17 @@ void pause_for_enter() {
     while ((c = getchar()) != EOF && c != '\n') {}
 }
 
-string ask(const string& prompt) {
-    tee_printf("%s", prompt.c_str());
+[[nodiscard]] string ask(std::string_view prompt) {
+    tee_printf("%s", std::string{prompt}.c_str());
     fflush(stdout);
-    char buf[256] = {0};
+    char buf[256]{};
     if (!fgets(buf, sizeof(buf), stdin)) return {};
     return trim(buf);
 }
 
-void show_udp_wg(const string& ip) {
-    const auto show = [&](const char* name, const int port, const UdpResult& u) {
-        std::string status;
+void show_udp_wg(std::string_view ip) {
+    const auto show = [&](std::string_view name, const int port, const UdpResult& u) {
+        std::string status{};
 #if BYEBYEVPN_HAS_STD_FORMAT
         status = u.responded ? std::format("RESP {}B {}", u.bytes, u.reply_hex)
                              : std::format("no answer ({})", u.err);
@@ -258,12 +264,13 @@ void show_udp_wg(const string& ip) {
             status = "no answer (" + u.err + ")";
         }
 #endif
-        tee_printf("  UDP:%-5d  %-30s  %s\n", port, name, status.c_str());
+        tee_printf("  UDP:%-5d  %-30s  %s\n", port, std::string{name}.c_str(), status.c_str());
     };
 
-    show("WireGuard handshake", 51820, wireguard_probe(ip, 51820));
-    show("WireGuard alt-port", 41641, wireguard_probe(ip, 41641));
-    show("AmneziaWG (Sx=8)", 55555, amneziawg_probe(ip, 55555));
+    std::string ip_str{ip};
+    show("WireGuard handshake", 51820, wireguard_probe(ip_str, 51820));
+    show("WireGuard alt-port", 41641, wireguard_probe(ip_str, 41641));
+    show("AmneziaWG (Sx=8)", 55555, amneziawg_probe(ip_str, 55555));
 }
 
 void interactive() {
@@ -286,7 +293,7 @@ void interactive() {
 
         if (c == '1') {
             const string t = ask("  target (IP or hostname): ");
-            if (!t.empty()) run_full_target(t);
+            if (!t.empty()) (void)run_full_target(t);
             pause_for_enter();
             continue;
         }
@@ -457,21 +464,21 @@ int main_impl(int argc, char** argv) {
                 fprintf(stderr, "Error: --threads requires a value\n");
                 return 1;
             }
-            g_threads = parse_int_fatal(argv[++i], "--threads", 1, 10000);
+            g_threads = parse_int_fatal(argv[++i], "--threads", kMinThreadCount, kMaxThreadCount);
         }
         else if (a == "--tcp-to") {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: --tcp-to requires a value\n");
                 return 1;
             }
-            g_tcp_to = parse_int_fatal(argv[++i], "--tcp-to", 1, 60000);
+            g_tcp_to = parse_int_fatal(argv[++i], "--tcp-to", kMinTimeoutMs, kMaxTimeoutMs);
         }
         else if (a == "--udp-to") {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: --udp-to requires a value\n");
                 return 1;
             }
-            g_udp_to = parse_int_fatal(argv[++i], "--udp-to", 1, 60000);
+            g_udp_to = parse_int_fatal(argv[++i], "--udp-to", kMinTimeoutMs, kMaxTimeoutMs);
         }
         else if (a == "--syn") g_tcp_syn_scan = true;
         else if (a == "--stealth") {
@@ -511,8 +518,8 @@ int main_impl(int argc, char** argv) {
                 fprintf(stderr, "Error: invalid --range format '%s' (expected start-end, e.g., 1000-2000)\n", v.c_str());
                 return 1;
             }
-            g_range_lo = parse_int_fatal(v.substr(0, dash).c_str(), "range start", 1, 65535);
-            g_range_hi = parse_int_fatal(v.substr(dash + 1).c_str(), "range end", 1, 65535);
+            g_range_lo = parse_int_fatal(v.substr(0, dash).c_str(), "range start", kMinPortNumber, kMaxPortNumber);
+            g_range_hi = parse_int_fatal(v.substr(dash + 1).c_str(), "range end", kMinPortNumber, kMaxPortNumber);
             if (g_range_lo > g_range_hi) {
                 fprintf(stderr, "Error: invalid --range '%s' (start must be <= end)\n", v.c_str());
                 return 1;
@@ -530,7 +537,7 @@ int main_impl(int argc, char** argv) {
             while (p < v.size()) {
                 const size_t c = v.find(',', p);
                 const string tok = v.substr(p, c == string::npos ? string::npos : c - p);
-                if (!tok.empty()) g_port_list.push_back(parse_int_fatal(tok.c_str(), "port list entry", 1, 65535));
+                if (!tok.empty()) g_port_list.push_back(parse_int_fatal(tok.c_str(), "port list entry", kMinPortNumber, kMaxPortNumber));
                 if (c == string::npos) break;
                 p = c + 1;
             }
@@ -584,7 +591,7 @@ int main_impl(int argc, char** argv) {
                 rc = 2;
                 goto done;
             }
-            run_full_target(pos[1]);
+            (void)run_full_target(pos[1]);
         } else if (cmd == "ports") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
@@ -612,7 +619,7 @@ int main_impl(int argc, char** argv) {
                 goto done;
             }
             int port = 443;
-            if (pos.size() >= 3 && !try_parse_int(pos[2], port, 1, 65535)) {
+            if (pos.size() >= 3 && !try_parse_int(pos[2], port, kMinPortNumber, kMaxPortNumber)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
                 rc = 2;
                 goto done;
@@ -659,7 +666,7 @@ int main_impl(int argc, char** argv) {
                 goto done;
             }
             int port = 443;
-            if (pos.size() >= 3 && !try_parse_int(pos[2], port, 1, 65535)) {
+            if (pos.size() >= 3 && !try_parse_int(pos[2], port, kMinPortNumber, kMaxPortNumber)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
                 rc = 2;
                 goto done;
@@ -697,7 +704,7 @@ int main_impl(int argc, char** argv) {
         } else if (cmd == "help") {
             help();
         } else {
-            run_full_target(cmd);
+            (void)run_full_target(cmd);
         }
     }
 
