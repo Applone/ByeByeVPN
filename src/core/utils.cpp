@@ -210,6 +210,45 @@ struct Value {
 [[nodiscard]] std::string unescape(std::string_view s) {
     std::string result;
     result.reserve(s.size());
+
+    auto hex_val = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+        if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+        return -1;
+    };
+
+    auto parse_u16 = [&](std::size_t pos) -> int {
+        // pos points to the first hex digit (4 chars needed)
+        if (pos + 4 > s.size()) return -1;
+        int val = 0;
+        for (int k = 0; k < 4; ++k) {
+            const int d = hex_val(s[pos + k]);
+            if (d < 0) return -1;
+            val = (val << 4) | d;
+        }
+        return val;
+    };
+
+    auto append_utf8 = [&](uint32_t cp) {
+        if (cp <= 0x7F) {
+            result += static_cast<char>(cp);
+        } else if (cp <= 0x7FF) {
+            result += static_cast<char>(0xC0 | (cp >> 6));
+            result += static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp <= 0xFFFF) {
+            result += static_cast<char>(0xE0 | (cp >> 12));
+            result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            result += static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp <= 0x10FFFF) {
+            result += static_cast<char>(0xF0 | (cp >> 18));
+            result += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            result += static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            result += "\xEF\xBF\xBD"; // U+FFFD replacement character
+        }
+    };
     
     for (std::size_t i{0}; i < s.size(); ++i) {
         if (s[i] == '\\' && i + 1 < s.size()) {
@@ -220,12 +259,29 @@ struct Value {
                 case 't': result += '\t'; break;
                 case '"': result += '"'; break;
                 case '\\': result += '\\'; break;
-                case 'u':
-                    if (i + 4 < s.size()) {
-                        i += 4;
+                case 'u': {
+                    const int u1 = parse_u16(i + 1);
+                    if (u1 < 0) {
                         result += '?';
+                        break;
                     }
+                    i += 4;
+                    // Check for UTF-16 surrogate pair
+                    if (u1 >= 0xD800 && u1 <= 0xDBFF &&
+                        i + 2 < s.size() && s[i + 1] == '\\' && s[i + 2] == 'u') {
+                        const int u2 = parse_u16(i + 3);
+                        if (u2 >= 0xDC00 && u2 <= 0xDFFF) {
+                            const uint32_t cp = 0x10000 +
+                                ((static_cast<uint32_t>(u1 - 0xD800) << 10) |
+                                 static_cast<uint32_t>(u2 - 0xDC00));
+                            append_utf8(cp);
+                            i += 6; // skip \uXXXX of the low surrogate
+                            break;
+                        }
+                    }
+                    append_utf8(static_cast<uint32_t>(u1));
                     break;
+                }
                 default:
                     result += c;
                     break;

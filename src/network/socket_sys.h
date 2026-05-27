@@ -160,3 +160,12 @@ public:
 private:
     SOCKET socket_;
 };
+
+// RAII wrapper for addrinfo (centralized — used by dns, tcp_scanner, udp_scanner)
+#include <memory>
+struct AddrInfoDeleter {
+    void operator()(addrinfo* ai) const noexcept {
+        if (ai) ::freeaddrinfo(ai);
+    }
+};
+using AddrInfoPtr = std::unique_ptr<addrinfo, AddrInfoDeleter>;

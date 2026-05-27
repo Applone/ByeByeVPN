@@ -640,18 +640,16 @@ struct SynPending {
     Clock::time_point sent{};
 };
 
-std::atomic<bool>* g_syn_abort_flag = nullptr;
+volatile sig_atomic_t g_syn_abort = 0;
 
 void syn_abort_signal_handler(int) {
-    if (g_syn_abort_flag != nullptr) {
-        g_syn_abort_flag->store(true, std::memory_order_relaxed);
-    }
+    g_syn_abort = 1;
 }
 
 class SynAbortSignalGuard {
 public:
-    explicit SynAbortSignalGuard(std::atomic<bool>& flag) {
-        g_syn_abort_flag = &flag;
+    explicit SynAbortSignalGuard() {
+        g_syn_abort = 0;
 
         std::memset(&new_action_, 0, sizeof(new_action_));
         new_action_.sa_handler = syn_abort_signal_handler;
@@ -668,7 +666,6 @@ public:
             sigaction(SIGINT, &old_int_, nullptr);
             sigaction(SIGTERM, &old_term_, nullptr);
         }
-        g_syn_abort_flag = nullptr;
     }
 
 private:
@@ -818,8 +815,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
 
     uint16_t src_port_cursor = 40000;
     std::mt19937 rng{std::random_device{}()};
-    std::atomic<bool> aborted{false};
-    SynAbortSignalGuard abort_guard(aborted);
+    SynAbortSignalGuard abort_guard;
 
     auto mark_done = [&out, global_scanned]() {
         ++out.scanned;
@@ -837,7 +833,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
     size_t next_idx = 0;
 
     while (next_idx < ports.size() || !pending.empty()) {
-        if (aborted.load(std::memory_order_relaxed)) {
+        if (g_syn_abort) {
             out.aborted = true;
             break;
         }

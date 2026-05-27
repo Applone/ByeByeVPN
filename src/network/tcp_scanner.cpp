@@ -8,14 +8,6 @@
 
 namespace {
 
-// RAII wrapper for addrinfo
-struct AddrInfoDeleter {
-    void operator()(addrinfo* ai) const noexcept {
-        if (ai) ::freeaddrinfo(ai);
-    }
-};
-using AddrInfoPtr = std::unique_ptr<addrinfo, AddrInfoDeleter>;
-
 // Helper to check if error indicates connection in progress
 [[nodiscard]] constexpr bool is_would_block_error(int err) noexcept {
 #ifdef _WIN32

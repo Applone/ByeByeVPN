@@ -60,7 +60,9 @@ struct FullReport {
     std::vector<std::string> guess_stack;
     
     // Check if report indicates VPN-like behavior
+    // Score starts at 100 (clean) and decreases as VPN evidence accumulates.
+    // A score below 50 corresponds to "HIGH-CONFIDENCE" VPN detection.
     [[nodiscard]] bool vpn_detected() const noexcept {
-        return score >= 50;  // Threshold for VPN detection
+        return score < 50;
     }
 };

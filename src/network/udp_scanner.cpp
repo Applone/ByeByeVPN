@@ -10,14 +10,6 @@
 
 namespace {
 
-// RAII wrapper for addrinfo
-struct AddrInfoDeleter {
-    void operator()(addrinfo* ai) const noexcept {
-        if (ai) ::freeaddrinfo(ai);
-    }
-};
-using AddrInfoPtr = std::unique_ptr<addrinfo, AddrInfoDeleter>;
-
 // Apply jitter delay if configured
 void apply_jitter_if_enabled() {
     if (g_udp_jitter) {

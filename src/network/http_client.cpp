@@ -239,7 +239,7 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
         return result;
     }
 
-    // Find path/query/fragment separator
+    // Find path/query separator (fragment is stripped, not sent to server)
     const auto slash_pos{u.find('/')};
     const auto query_pos{u.find('?')};
     const auto frag_pos{u.find('#')};
@@ -249,19 +249,27 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
         (split_pos == std::string_view::npos || query_pos < split_pos)) {
         split_pos = query_pos;
     }
-    if (frag_pos != std::string_view::npos && 
-        (split_pos == std::string_view::npos || frag_pos < split_pos)) {
-        split_pos = frag_pos;
-    }
+    // Fragment terminates the URL but is not included in split_pos;
+    // instead we use it only to bound the path/query portion.
 
     if (split_pos != std::string_view::npos) {
         host = std::string{u.substr(0, split_pos)};
-        path = std::string{u.substr(split_pos)};
+        // Take path+query up to fragment (if any), stripping fragment
+        if (frag_pos != std::string_view::npos && frag_pos > split_pos) {
+            path = std::string{u.substr(split_pos, frag_pos - split_pos)};
+        } else {
+            path = std::string{u.substr(split_pos)};
+        }
         if (path[0] != '/') {
             path = "/" + path;
         }
     } else {
-        host = std::string{u};
+        // No path component — host may still contain a fragment to strip
+        if (frag_pos != std::string_view::npos) {
+            host = std::string{u.substr(0, frag_pos)};
+        } else {
+            host = std::string{u};
+        }
     }
 
     if (host.empty()) {
@@ -463,11 +471,16 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
                 std::string_view status_str{
                     std::string_view{headers}.substr(space1 + 1, space2 - space1 - 1)
                 };
-                char* endptr{nullptr};
                 const std::string status_str_s{status_str};
-                const long val{std::strtol(status_str_s.c_str(), &endptr, 10)};
-                if (endptr != status_str_s.c_str()) {
-                    result.status = static_cast<int>(val);
+                if (status_str.size() == 3 &&
+                    std::isdigit(static_cast<unsigned char>(status_str[0])) &&
+                    std::isdigit(static_cast<unsigned char>(status_str[1])) &&
+                    std::isdigit(static_cast<unsigned char>(status_str[2]))) {
+                    char* endptr{nullptr};
+                    const long val{std::strtol(status_str_s.c_str(), &endptr, 10)};
+                    if (endptr != status_str_s.c_str() && *endptr == '\0') {
+                        result.status = static_cast<int>(val);
+                    }
                 }
             }
         }

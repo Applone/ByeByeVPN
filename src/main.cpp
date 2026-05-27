@@ -47,6 +47,7 @@ public:
         if (g_save_fp) {
             fprintf(g_save_fp, "```\n");
             fclose(g_save_fp);
+            fprintf(stderr, "saved to %s\n", g_save_path.c_str());
             g_save_fp = nullptr;
         }
         openssl_runtime_cleanup();
@@ -588,15 +589,13 @@ int main_impl(int argc, char** argv) {
         if (cmd == "scan" || cmd == "full") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
-                rc = 2;
-                goto done;
+                return 2;
             }
             (void)run_full_target(pos[1]);
         } else if (cmd == "ports") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
-                rc = 2;
-                goto done;
+                return 2;
             }
             const auto rs = resolve_host(pos[1]);
             const auto op = scan_tcp(rs.primary_ip.empty() ? pos[1] : rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
@@ -606,8 +605,7 @@ int main_impl(int argc, char** argv) {
         } else if (cmd == "udp") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
-                rc = 2;
-                goto done;
+                return 2;
             }
             const auto rs = resolve_host(pos[1]);
             const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
@@ -615,22 +613,19 @@ int main_impl(int argc, char** argv) {
         } else if (cmd == "tls") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
-                rc = 2;
-                goto done;
+                return 2;
             }
             int port = 443;
             if (pos.size() >= 3 && !try_parse_int(pos[2], port, kMinPortNumber, kMaxPortNumber)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
-                rc = 2;
-                goto done;
+                return 2;
             }
             const auto rs = resolve_host(pos[1]);
             const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
             const auto tp = tls_probe(ip, port, pos[1]);
             if (!tp.ok) {
                 tee_printf("TLS fail: %s\n", tp.err.c_str());
-                rc = 1;
-                goto done;
+                return 1;
             }
             tee_printf("  %s / %s / ALPN=%s / %s / %lldms\n",
                        tp.version.c_str(), tp.cipher.c_str(), tp.alpn.c_str(), tp.group.c_str(), tp.handshake_ms);
@@ -662,14 +657,12 @@ int main_impl(int argc, char** argv) {
         } else if (cmd == "j3") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
-                rc = 2;
-                goto done;
+                return 2;
             }
             int port = 443;
             if (pos.size() >= 3 && !try_parse_int(pos[2], port, kMinPortNumber, kMaxPortNumber)) {
                 fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
-                rc = 2;
-                goto done;
+                return 2;
             }
             const auto rs = resolve_host(pos[1]);
             const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
@@ -708,10 +701,6 @@ int main_impl(int argc, char** argv) {
         }
     }
 
- done:
-    if (g_save_fp) {
-        fprintf(stderr, "saved to %s\n", g_save_path.c_str());
-    }
     return rc;
 }
 

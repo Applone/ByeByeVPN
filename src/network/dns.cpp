@@ -1,29 +1,12 @@
 #include "dns.h"
+#include "socket_sys.h"
 
 #include <algorithm>
 #include <chrono>
-#include <memory>
 #include <array>
 #include <ranges>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <sys/socket.h>
-#endif
-
 namespace {
-
-// RAII wrapper for addrinfo
-struct AddrInfoDeleter {
-    void operator()(addrinfo* ai) const noexcept {
-        if (ai) ::freeaddrinfo(ai);
-    }
-};
-using AddrInfoPtr = std::unique_ptr<addrinfo, AddrInfoDeleter>;
 
 // Extract IP string from sockaddr
 [[nodiscard]] std::string extract_ip(const sockaddr* sa) {
