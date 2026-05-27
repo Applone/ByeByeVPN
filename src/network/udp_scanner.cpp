@@ -160,8 +160,8 @@ void set_recv_timeout(SOCKET s, int timeout_ms) {
         result.responded = true;
         result.bytes = static_cast<int>(got);
         result.reply_hex = hex_s(
-            reinterpret_cast<unsigned char*>(buf.data()),
-            static_cast<std::size_t>(std::min<ssize_t>(32, got)),
+            reinterpret_cast<const unsigned char*>(buf.data()),
+            std::min<std::size_t>(32U, static_cast<std::size_t>(got)),
             true
         );
     } else if (is_timeout_error(werr)) {
