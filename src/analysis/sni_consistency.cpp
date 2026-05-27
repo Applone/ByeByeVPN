@@ -5,6 +5,7 @@
 #include "../core/utils.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <set>
 #include <string>

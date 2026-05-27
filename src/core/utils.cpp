@@ -1,6 +1,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdarg>
