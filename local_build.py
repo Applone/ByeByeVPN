@@ -1,33 +1,4 @@
 #!/usr/bin/env python3
-"""ByeByeVPN local build orchestrator.
-
-A Python rewrite of the original ``local_build.sh``. It drives the full local
-build/test matrix behind a live terminal UI:
-
-  * dependency + toolchain checks
-  * vcpkg bootstrap
-  * static analysis (cppcheck, clang-tidy)
-  * debug build
-  * coverage build + tests
-  * containerised sanitizers (asan/ubsan, tsan, msan)
-  * Windows cross-compile + tests (native / wine / skip)
-
-Each stage runs sequentially while animating a spinner and streaming
-the stage's latest log line. On failure the offending stage's log is
-printed and the build aborts; build artifacts are removed on exit unless
-``--keep`` is given.
-
-Usage:
-    local_build.py [--keep] [--linux] [--windows]
-
-    --keep      Do not remove build artifacts on exit.
-    --linux     Build only the Linux matrix (unless --windows is also given).
-    --windows   Build only the Windows matrix (unless --linux is also given).
-
-Passing both --linux and --windows (in any order) builds both, which is also
-the default when neither is supplied.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -36,10 +7,11 @@ import os
 import shutil
 import signal
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Coroutine, Any, Optional
+from typing import Callable, Coroutine, Any
 
 # --------------------------------------------------------------------------- #
 # Constants & Configuration
@@ -729,7 +701,7 @@ class Orchestrator:
             if not self.ui.tty:
                 print(f"[RUN ] {st.name}", flush=True)
 
-            st.log_path = f"/tmp/bbvpn_stage_{st.key}.log"
+            fd, st.log_path = tempfile.mkstemp(prefix=f"bbvpn_stage_{st.key}_", suffix=".log")
             
             start = time.monotonic()
             error = None
@@ -742,7 +714,7 @@ class Orchestrator:
             spin_task = asyncio.create_task(spinner_task()) if self.ui.tty else None
 
             try:
-                with open(st.log_path, "wb") as log_file:
+                with os.fdopen(fd, "wb") as log_file:
                     await st.func(st, log_file)
             except Exception as exc:
                 error = exc

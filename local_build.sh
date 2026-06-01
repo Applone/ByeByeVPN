@@ -34,8 +34,10 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-STATE_FILE="/tmp/bbvpn_state_$$.sh"
+STATE_FILE="$(mktemp "/tmp/bbvpn_state.XXXXXX.sh")"
+chmod 600 "$STATE_FILE"
 RUNNING_PID=""
+STAGE_LOGS=""
 
 cleanup() {
     if [ -n "${UI_LINES:-}" ]; then
@@ -54,7 +56,7 @@ cleanup() {
         rm -rf build staging build-cov coverage.info coverage-html \
                deps build-asan-ubsan build-tsan build-msan build-win
     fi
-    rm -f "$STATE_FILE"
+    rm -f "$STATE_FILE" $STAGE_LOGS
 }
 
 trap 'echo -e "\n${RED}Interrupted${RESET}"; exit 130' INT
@@ -272,8 +274,10 @@ run_stage() {
     STAGE_STATUS[$index]="RUN"
     draw_ui
     
-    local log="/tmp/bbvpn_stage_${key}.log"
-    > "$log"
+    local log
+    log="$(mktemp "/tmp/bbvpn_stage_${key}.XXXXXX.log")"
+    chmod 600 "$log"
+    STAGE_LOGS="$STAGE_LOGS $log"
 
     local start_time=$(date +%s.%N)
     

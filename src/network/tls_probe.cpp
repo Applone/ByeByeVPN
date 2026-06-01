@@ -10,7 +10,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -204,8 +206,12 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
                 &tv
             )};
             
-            if (sr <= 0) {
+            if (sr == 0) {
                 timed_out = true;
+                break;
+            } else if (sr < 0) {
+                r.err = "select error: " + std::string{strerror(errno)};
+                timed_out = false;
                 break;
             }
         } else {
@@ -219,7 +225,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
     if (ssl_res != 1) {
         if (timed_out) {
             r.err = "timeout during tls handshake";
-        } else {
+        } else if (r.err.empty()) {
             const int ssl_err_code = SSL_get_error(ssl.get(), ssl_res);
             const unsigned long e{ERR_get_error()};
             std::array<char, 256> buf{};

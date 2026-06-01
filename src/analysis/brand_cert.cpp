@@ -178,18 +178,12 @@ inline constexpr std::array kBrandTable{
 ) {
     if (brand_domain.empty() || asn_orgs.empty()) return false;
     
-    std::string ln{brand_domain};
-    std::ranges::transform(ln, ln.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    
-    if (ln.size() > 2 && ln[0] == '*' && ln[1] == '.') {
-        ln = ln.substr(2);
-    }
+    const char* canonical{is_brand(brand_domain)};
+    if (!canonical) return false;
     
     // Find markers for brand
     const auto it = std::ranges::find_if(kBrandTable, [&](const auto& entry) {
-        return ln == entry.brand;
+        return std::string_view(canonical) == entry.brand;
     });
     if (it == kBrandTable.end()) return false;
     
