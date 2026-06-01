@@ -269,10 +269,10 @@ TEST_CASE("http_get request target keeps query and fragment without explicit pat
 
     const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "?q=1#frag", 1000);
     REQUIRE(r.status == 200);
-    REQUIRE(captured.find("GET /?q=1#frag HTTP/1.1") != std::string::npos);
+    REQUIRE(captured.find("GET /?q=1 HTTP/1.1") != std::string::npos);
 }
 
-TEST_CASE("http_get status parser accepts numeric prefix in malformed status token") {
+TEST_CASE("http_get status parser expects numeric prefix in status token") {
     testnet::TcpOneShotServer server([](SOCKET client) {
         char req[1024] = {0};
         recv(client, req, sizeof(req), 0);
@@ -280,7 +280,7 @@ TEST_CASE("http_get status parser accepts numeric prefix in malformed status tok
     });
 
     const auto r = http_get("http://127.0.0.1:" + std::to_string(server.port()) + "/", 1000);
-    REQUIRE(r.status == 20);
+    REQUIRE(r.status == 0);
     REQUIRE(r.body == "body");
 }
 

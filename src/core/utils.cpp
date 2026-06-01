@@ -254,6 +254,8 @@ struct Value {
         if (s[i] == '\\' && i + 1 < s.size()) {
             char c{s[++i]};
             switch (c) {
+                case 'b': result += '\b'; break;
+                case 'f': result += '\f'; break;
                 case 'n': result += '\n'; break;
                 case 'r': result += '\r'; break;
                 case 't': result += '\t'; break;

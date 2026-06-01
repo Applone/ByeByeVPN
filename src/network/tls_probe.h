@@ -28,9 +28,11 @@ struct TlsProbe {
     bool is_wildcard{false};
     int san_count{0};
     
+    bool has_certificate{false};
+    
     // Check if certificate is expiring soon (less than 7 days)
     [[nodiscard]] constexpr bool expiring_soon() const noexcept {
-        return days_left >= 0 && days_left < 7;
+        return has_certificate && days_left >= 0 && days_left < 7;
     }
     
     // Check if certificate is expired

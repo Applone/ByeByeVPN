@@ -646,9 +646,11 @@ void syn_abort_signal_handler(int) {
     g_syn_abort = 1;
 }
 
+std::mutex g_syn_scan_mutex;
+
 class SynAbortSignalGuard {
 public:
-    explicit SynAbortSignalGuard() {
+    explicit SynAbortSignalGuard() : lock_(g_syn_scan_mutex) {
         g_syn_abort = 0;
 
         std::memset(&new_action_, 0, sizeof(new_action_));
@@ -669,6 +671,7 @@ public:
     }
 
 private:
+    std::unique_lock<std::mutex> lock_;
     bool installed_ = false;
     struct sigaction new_action_ {};
     struct sigaction old_int_ {};

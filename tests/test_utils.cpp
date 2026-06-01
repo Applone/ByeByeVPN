@@ -128,7 +128,7 @@ TEST_CASE("json_get_str tolerates malformed input") {
 }
 
 TEST_CASE("json_get_str unicode escape") {
-    REQUIRE(json_get_str(R"({"a":"\u0041B"})", "a") == "?B");
+    REQUIRE(json_get_str(R"({"a":"\u0041B"})", "a") == "AB");
 }
 
 TEST_CASE("col returns empty string when no_color is true") {

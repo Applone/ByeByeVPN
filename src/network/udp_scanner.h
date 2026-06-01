@@ -30,5 +30,10 @@ struct UdpResult {
                                          const unsigned char* payload, 
                                          int plen, 
                                          int timeout_ms) {
+    if (plen < 0 || (plen > 0 && payload == nullptr)) {
+        UdpResult r;
+        r.err = "invalid argument";
+        return r;
+    }
     return udp_probe(host, port, std::span<const unsigned char>{payload, static_cast<std::size_t>(plen)}, timeout_ms);
 }

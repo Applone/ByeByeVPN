@@ -156,7 +156,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
     std::vector<unsigned char> wire;
     for (const auto& p : split(alpn, ',')) {
         const std::string v{trim(p)};
-        if (v.empty()) continue;
+        if (v.empty() || v.size() > 255) continue;
         wire.push_back(static_cast<unsigned char>(v.size()));
         std::ranges::transform(v, std::back_inserter(wire), [](char c) {
             return static_cast<unsigned char>(c);
@@ -170,6 +170,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
     set_nonblocking(s, true);
     const auto deadline{t0 + std::chrono::milliseconds{to_ms}};
     int ssl_res{0};
+    bool timed_out = false;
     
     while (true) {
         ssl_res = SSL_connect(ssl.get());
@@ -179,7 +180,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
         if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
             const auto now{std::chrono::steady_clock::now()};
             if (now >= deadline) {
-                ssl_res = -1;
+                timed_out = true;
                 break;
             }
             
@@ -204,7 +205,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
             )};
             
             if (sr <= 0) {
-                ssl_res = -1;
+                timed_out = true;
                 break;
             }
         } else {
@@ -216,13 +217,15 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
 
     // Check handshake result
     if (ssl_res != 1) {
-        if (ssl_res == -1) {
+        if (timed_out) {
             r.err = "timeout during tls handshake";
         } else {
+            const int ssl_err_code = SSL_get_error(ssl.get(), ssl_res);
             const unsigned long e{ERR_get_error()};
             std::array<char, 256> buf{};
             ERR_error_string_n(e, buf.data(), buf.size());
             r.err = buf[0] ? std::string{buf.data()} : "tls handshake failed";
+            r.err += " (ssl_err=" + std::to_string(ssl_err_code) + ")";
         }
         return r;
     }
@@ -248,6 +251,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
     // Parse certificate
     X509Ptr cert{SSL_get_peer_certificate(ssl.get())};
     if (cert) {
+        r.has_certificate = true;
         r.cert_subject = x509_name_one(X509_get_subject_name(cert.get()));
         r.cert_issuer = x509_name_one(X509_get_issuer_name(cert.get()));
         r.subject_cn = extract_cn_from_subject(r.cert_subject);

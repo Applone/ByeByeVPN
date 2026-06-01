@@ -18,9 +18,11 @@
         if (c >= 32 && c < 127) {
             out += c;
         } else if (c == '\r') {
-            out += "\\r";
+            if (out.size() + 2 <= lim) out += "\\r";
+            else out += '.';
         } else if (c == '\n') {
-            out += "\\n";
+            if (out.size() + 2 <= lim) out += "\\n";
+            else out += '.';
         } else {
             out += '.';
         }
@@ -49,7 +51,10 @@
         "Connection: close\r\n\r\n"
     };
     
-    tcp_send_all(s, req.data(), static_cast<int>(req.size()));
+    if (tcp_send_all(s, req.data(), static_cast<int>(req.size())) != static_cast<int>(req.size())) {
+        f.silent = true;
+        return f;
+    }
     
     std::array<char, 2048> buf{};
     const int n{tcp_recv_to(s, buf.data(), static_cast<int>(buf.size() - 1), 1500)};
@@ -147,7 +152,10 @@
     
     // SOCKS5 greeting: version 5, 2 methods (no-auth, user/pass)
     constexpr std::array<unsigned char, 4> greet{0x05, 0x02, 0x00, 0x02};
-    tcp_send_all(s, greet.data(), static_cast<int>(greet.size()));
+    if (tcp_send_all(s, greet.data(), static_cast<int>(greet.size())) != static_cast<int>(greet.size())) {
+        f.silent = true;
+        return f;
+    }
     
     std::array<unsigned char, 8> reply{};
     const int n{tcp_recv_to(s, reinterpret_cast<char*>(reply.data()), static_cast<int>(reply.size()), 1200)};
@@ -205,7 +213,10 @@
         "\r\n"
     };
     
-    tcp_send_all(s, req.data(), static_cast<int>(req.size()));
+    if (tcp_send_all(s, req.data(), static_cast<int>(req.size())) != static_cast<int>(req.size())) {
+        f.silent = true;
+        return f;
+    }
 
     std::array<char, 512> buf{};
     const int n{tcp_recv_to(s, buf.data(), static_cast<int>(buf.size() - 1), 1500)};

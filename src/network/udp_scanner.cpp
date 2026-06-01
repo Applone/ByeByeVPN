@@ -129,7 +129,7 @@ void set_recv_timeout(SOCKET s, int timeout_ms) {
     // Receive response
     std::array<char, 2048> buf{};
     const auto got = ::recv(sock.get(), buf.data(), buf.size(), 0);
-    const int saved_err{(got <= 0) ? WSAGetLastError() : 0};
+    const int saved_err{(got < 0) ? WSAGetLastError() : 0};
     
     // Calculate elapsed time
     result.ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -148,14 +148,14 @@ void set_recv_timeout(SOCKET s, int timeout_ms) {
     const int werr{saved_err};
 #endif
     
-    if (got > 0) {
+    if (got >= 0) {
         result.responded = true;
         result.bytes = static_cast<int>(got);
-        result.reply_hex = hex_s(
+        result.reply_hex = got > 0 ? hex_s(
             reinterpret_cast<const unsigned char*>(buf.data()),
             std::min<std::size_t>(32U, static_cast<std::size_t>(got)),
             true
-        );
+        ) : "";
     } else if (is_timeout_error(werr)) {
         result.err = "no-reply / filtered";
     } else if (is_port_unreachable(werr)) {

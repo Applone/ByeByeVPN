@@ -241,8 +241,12 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
 
     // Find path/query separator (fragment is stripped, not sent to server)
     const auto slash_pos{u.find('/')};
-    const auto query_pos{u.find('?')};
+    auto query_pos{u.find('?')};
     const auto frag_pos{u.find('#')};
+
+    if (frag_pos != std::string_view::npos && query_pos != std::string_view::npos && query_pos > frag_pos) {
+        query_pos = std::string_view::npos;
+    }
 
     auto split_pos{slash_pos};
     if (query_pos != std::string_view::npos && 
@@ -260,7 +264,7 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
         } else {
             path = std::string{u.substr(split_pos)};
         }
-        if (path[0] != '/') {
+        if (path.empty() || path[0] != '/') {
             path = "/" + path;
         }
     } else {

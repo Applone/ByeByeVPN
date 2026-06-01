@@ -95,6 +95,8 @@ namespace {
     for (const auto* p{ai.get()}; p; p = p->ai_next) {
         std::string ip{extract_ip(p->ai_addr)};
         
+        if (ip.empty()) continue;
+        
         if (p->ai_family == AF_INET) {
             // Use ranges to check for duplicates
             if (std::ranges::find(v4_ips, ip) == v4_ips.end()) {

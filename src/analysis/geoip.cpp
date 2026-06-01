@@ -259,7 +259,11 @@
         return g;
     }
 
-    g.ip = std::string{ip};
+    if (!ip.empty()) {
+        g.ip = std::string{ip};
+    } else {
+        g.ip = json_get_str(r.body, "ip");
+    }
     g.country_code = json_get_str(r.body, "iso");
 
     // Extract country block

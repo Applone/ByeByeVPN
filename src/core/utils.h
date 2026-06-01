@@ -11,6 +11,7 @@ import <map>;
 import <chrono>;
 import <span>;
 import <concepts>;
+import <cstdio>;
 #else
 #include <string>
 #include <string_view>
