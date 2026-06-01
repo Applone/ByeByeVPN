@@ -149,10 +149,11 @@ inline constexpr std::array kBrandTable{
     }
     
     // Suffix match (e.g., www.google.com matches google.com)
-    for (const auto& entry : kBrandTable) {
-        if (iends_with_dot(name, entry.brand)) {
-            return entry.brand;
-        }
+    const auto suffix = std::ranges::find_if(kBrandTable, [&](const auto& entry) {
+        return iends_with_dot(name, entry.brand);
+    });
+    if (suffix != kBrandTable.end()) {
+        return suffix->brand;
     }
     
     return nullptr;
