@@ -37,7 +37,7 @@ inline constexpr int kProbeTimeoutMs{1500};
     std::array<unsigned char, kWireGuardPacketSize> pkt{};
     
     // Set message type: MessageInitiation (0x01)
-    pkt[0] = 0x01;
+    pkt.at(0) = 0x01;
     
     // Fill random data starting at offset 4
     if (!fill_random(std::span{pkt.data() + kWireGuardRandomOffset, kWireGuardRandomSize})) {
@@ -62,7 +62,7 @@ inline constexpr int kProbeTimeoutMs{1500};
     }
     
     // Set message type after junk prefix
-    pkt[actual_junk_len] = 0x01;
+    pkt.at(actual_junk_len) = 0x01;
     
     // Fill random data for WireGuard payload
     if (!fill_random(std::span{pkt.data() + actual_junk_len + kWireGuardRandomOffset, 

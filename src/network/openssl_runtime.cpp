@@ -34,7 +34,7 @@ OSSL_PROVIDER* g_provider_legacy{nullptr};
     std::array<char, 256> buf{};
     ERR_error_string_n(e, buf.data(), buf.size());
     
-    return buf[0] ? std::string{buf.data()} : 
+    return buf.at(0) ? std::string{buf.data()} : 
            (fallback ? std::string{fallback} : std::string{"openssl"});
 }
 

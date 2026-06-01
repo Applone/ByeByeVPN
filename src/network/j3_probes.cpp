@@ -91,9 +91,9 @@ namespace {
     if (first_line.size() < 9) return false;
     if (!first_line.starts_with("HTTP/")) return false;
     
-    const char x{first_line[5]};
-    const char dot{first_line[6]};
-    const char y{first_line[7]};
+    const char x{first_line.at(5)};
+    const char dot{first_line.at(6)};
+    const char y{first_line.at(7)};
     
     if (dot != '.') return false;
     
@@ -209,20 +209,20 @@ namespace {
             0x00, 0x33, 0x00, 0x02, 0x00, 0x00
         };
         std::array<unsigned char, sizeof(kHello)> hello{};
-        std::copy(std::begin(kHello), std::end(kHello), hello.begin());
+        std::ranges::copy(kHello, hello.begin());
         
         // Fill random bytes
         if (RAND_bytes(hello.data() + 11, 32) == 1) {
             // Randomize SNI prefix
             for (std::size_t i{11 + 32}; i + 11 <= hello.size(); ++i) {
-                if (hello[i] == '.' && hello[i + 1] == 'i' && hello[i + 2] == 'n' &&
-                    hello[i + 3] == 'v' && hello[i + 4] == 'a' && hello[i + 5] == 'l' &&
-                    hello[i + 6] == 'i' && hello[i + 7] == 'd') {
+                if (hello.at(i) == '.' && hello.at(i + 1) == 'i' && hello.at(i + 2) == 'n' &&
+                    hello.at(i + 3) == 'v' && hello.at(i + 4) == 'a' && hello.at(i + 5) == 'l' &&
+                    hello.at(i + 6) == 'i' && hello.at(i + 7) == 'd') {
                     std::array<unsigned char, 3> r{};
                     if (RAND_bytes(r.data(), 3) == 1) {
-                        hello[i - 3] = static_cast<unsigned char>('a' + (r[0] % 26));
-                        hello[i - 2] = static_cast<unsigned char>('a' + (r[1] % 26));
-                        hello[i - 1] = static_cast<unsigned char>('a' + (r[2] % 26));
+                        hello.at(i - 3) = static_cast<unsigned char>('a' + (r.at(0) % 26));
+                        hello.at(i - 2) = static_cast<unsigned char>('a' + (r.at(1) % 26));
+                        hello.at(i - 1) = static_cast<unsigned char>('a' + (r.at(2) % 26));
                     }
                     break;
                 }
@@ -239,7 +239,7 @@ namespace {
     
     // Probe 8: Garbage bytes
     {
-        std::array<unsigned char, 128> garb;
+        std::array<unsigned char, 128> garb{};
         garb.fill(0xFF);
         out.push_back(j3_send(host, port, "0xFF x128", garb.data(), static_cast<int>(garb.size())));
     }
@@ -260,7 +260,7 @@ namespace {
     for (const auto& p : probes) {
         if (p.responded) {
             ++a.resp;
-            keys.push_back({p.first_line, p.bytes, p.name.c_str()});
+            keys.push_back({.line=p.first_line, .bytes=p.bytes, .name=p.name.c_str()});
             
             bool bad_v{false};
             const bool is_http{looks_like_http_line(p.first_line, &bad_v)};
@@ -283,18 +283,18 @@ namespace {
         bool has_valid_http{false};
         
         for (std::size_t j{0}; j < keys.size(); ++j) {
-            if (keys[i].line == keys[j].line && keys[i].bytes == keys[j].bytes) {
+            if (keys.at(i).line == keys.at(j).line && keys.at(i).bytes == keys.at(j).bytes) {
                 ++count;
-                if (is_valid_http_probe(keys[j].name)) {
+                if (is_valid_http_probe(keys.at(j).name)) {
                     has_valid_http = true;
                 }
             }
         }
         
-        if (count >= 2 && keys[i].line.size() > 3 && has_valid_http) {
+        if (count >= 2 && keys.at(i).line.size() > 3 && has_valid_http) {
             a.canned_identical = count;
-            a.canned_line = keys[i].line;
-            a.canned_bytes = keys[i].bytes;
+            a.canned_line = keys.at(i).line;
+            a.canned_bytes = keys.at(i).bytes;
             break;
         }
     }

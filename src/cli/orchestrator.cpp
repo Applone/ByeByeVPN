@@ -30,9 +30,9 @@ struct UdpPlan {
 };
 
 constexpr std::array<UdpPlan, 3> kUdpPlans{{
-    {51820, "WireGuard handshake", false},
-    {41641, "WireGuard alt-port handshake", false},
-    {55555, "AmneziaWG handshake (Sx=8)", true},
+    {.port=51820, .label="WireGuard handshake", .use_awg=false},
+    {.port=41641, .label="WireGuard alt-port handshake", .use_awg=false},
+    {.port=55555, .label="AmneziaWG handshake (Sx=8)", .use_awg=true},
 }};
 
 constexpr std::array<int, 22> kTlsPorts{{
@@ -276,7 +276,7 @@ FullReport run_full_target(std::string_view target) {
             ? amneziawg_probe(R.dns.primary_ip, plan.port)
             : wireguard_probe(R.dns.primary_ip, plan.port);
 
-        R.udp_probes.push_back({plan.port, u});
+        R.udp_probes.emplace_back(plan.port, u);
 
         tee_printf("  %sUDP:%-5d%s  %-32s  ",
                    u.responded ? col(C::GRN) : col(C::DIM),
@@ -462,7 +462,7 @@ FullReport run_full_target(std::string_view target) {
     ScoreBook book;
 
     const auto responded_on = [&](const int port) {
-        return std::any_of(R.udp_probes.begin(), R.udp_probes.end(), [port](const auto& x) {
+        return std::ranges::any_of(R.udp_probes, [port](const auto& x) {
             return x.first == port && x.second.responded;
         });
     };
@@ -743,12 +743,12 @@ FullReport run_full_target(std::string_view target) {
         };
 
         const std::array<Rule, 6> rules{{
-            {"WireGuard signature", wg_default, "UDP/51820 handshake reply", true},
-            {"AmneziaWG signature", awg_default, "UDP/55555 obfuscated handshake reply", true},
-            {"Open proxy exposure", any_proxy_open, "SOCKS/HTTP CONNECT reachable", true},
-            {"Reality cert-steering", any_reality, "SNI steering discriminator", false},
-            {"Cert impersonation", any_impersonation, "brand cert/ASN mismatch", false},
-            {"Active-probe anomalies", any_j3_canned || any_j3_badver, "canned/malformed HTTP fallback", false},
+            {.name="WireGuard signature", .hit=wg_default, .why="UDP/51820 handshake reply", .tier_a=true},
+            {.name="AmneziaWG signature", .hit=awg_default, .why="UDP/55555 obfuscated handshake reply", .tier_a=true},
+            {.name="Open proxy exposure", .hit=any_proxy_open, .why="SOCKS/HTTP CONNECT reachable", .tier_a=true},
+            {.name="Reality cert-steering", .hit=any_reality, .why="SNI steering discriminator", .tier_a=false},
+            {.name="Cert impersonation", .hit=any_impersonation, .why="brand cert/ASN mismatch", .tier_a=false},
+            {.name="Active-probe anomalies", .hit=any_j3_canned || any_j3_badver, .why="canned/malformed HTTP fallback", .tier_a=false},
         }};
 
         int a_hits = 0;

@@ -12,27 +12,27 @@ namespace {
 
 // Skip whitespace in JSON
 void skip_ws(std::string_view s, std::size_t& i) {
-    while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) {
+    while (i < s.size() && std::isspace(static_cast<unsigned char>(s.at(i)))) {
         ++i;
     }
 }
 
 // Parse JSON string
 [[nodiscard]] bool parse_string(std::string_view s, std::size_t& i) {
-    if (i >= s.size() || s[i] != '"') return false;
+    if (i >= s.size() || s.at(i) != '"') return false;
     ++i;
 
     while (i < s.size()) {
-        const unsigned char c{static_cast<unsigned char>(s[i++])};
+        const unsigned char c{static_cast<unsigned char>(s.at(i++))};
         if (c == '"') return true;
 
         if (c == '\\') {
             if (i >= s.size()) return false;
-            const char esc{s[i++]};
+            const char esc{s.at(i++)};
 
             if (esc == 'u') {
                 for (int n{0}; n < 4; ++n) {
-                    if (i >= s.size() || std::isxdigit(static_cast<unsigned char>(s[i])) == 0) {
+                    if (i >= s.size() || std::isxdigit(static_cast<unsigned char>(s.at(i))) == 0) {
                         return false;
                     }
                     ++i;
@@ -53,11 +53,11 @@ void skip_ws(std::string_view s, std::size_t& i) {
 
 // Parse JSON object
 [[nodiscard]] bool parse_object(std::string_view s, std::size_t& i) {
-    if (i >= s.size() || s[i] != '{') return false;
+    if (i >= s.size() || s.at(i) != '{') return false;
     ++i;
     skip_ws(s, i);
 
-    if (i < s.size() && s[i] == '}') {
+    if (i < s.size() && s.at(i) == '}') {
         ++i;
         return true;
     }
@@ -65,17 +65,17 @@ void skip_ws(std::string_view s, std::size_t& i) {
     while (i < s.size()) {
         if (!parse_string(s, i)) return false;
         skip_ws(s, i);
-        if (i >= s.size() || s[i] != ':') return false;
+        if (i >= s.size() || s.at(i) != ':') return false;
         ++i;
         if (!parse_value(s, i)) return false;
         skip_ws(s, i);
         if (i >= s.size()) return false;
 
-        if (s[i] == '}') {
+        if (s.at(i) == '}') {
             ++i;
             return true;
         }
-        if (s[i] != ',') return false;
+        if (s.at(i) != ',') return false;
         ++i;
         skip_ws(s, i);
     }
@@ -84,11 +84,11 @@ void skip_ws(std::string_view s, std::size_t& i) {
 
 // Parse JSON array
 [[nodiscard]] bool parse_array(std::string_view s, std::size_t& i, std::size_t* count = nullptr) {
-    if (i >= s.size() || s[i] != '[') return false;
+    if (i >= s.size() || s.at(i) != '[') return false;
     ++i;
     skip_ws(s, i);
 
-    if (i < s.size() && s[i] == ']') {
+    if (i < s.size() && s.at(i) == ']') {
         ++i;
         if (count) *count = 0;
         return true;
@@ -101,12 +101,12 @@ void skip_ws(std::string_view s, std::size_t& i) {
         skip_ws(s, i);
         if (i >= s.size()) return false;
 
-        if (s[i] == ']') {
+        if (s.at(i) == ']') {
             ++i;
             if (count) *count = items;
             return true;
         }
-        if (s[i] != ',') return false;
+        if (s.at(i) != ',') return false;
         ++i;
         skip_ws(s, i);
     }
@@ -117,31 +117,31 @@ void skip_ws(std::string_view s, std::size_t& i) {
 [[nodiscard]] bool parse_number(std::string_view s, std::size_t& i) {
     const std::size_t start{i};
 
-    if (i < s.size() && s[i] == '-') ++i;
+    if (i < s.size() && s.at(i) == '-') ++i;
     if (i >= s.size()) return false;
 
-    if (s[i] == '0') {
+    if (s.at(i) == '0') {
         ++i;
-    } else if (std::isdigit(static_cast<unsigned char>(s[i]))) {
-        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+    } else if (std::isdigit(static_cast<unsigned char>(s.at(i)))) {
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s.at(i)))) ++i;
     } else {
         return false;
     }
 
     // Fractional part
-    if (i < s.size() && s[i] == '.') {
+    if (i < s.size() && s.at(i) == '.') {
         ++i;
         const std::size_t frac{i};
-        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s.at(i)))) ++i;
         if (frac == i) return false;
     }
 
     // Exponent
-    if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+    if (i < s.size() && (s.at(i) == 'e' || s.at(i) == 'E')) {
         ++i;
-        if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+        if (i < s.size() && (s.at(i) == '+' || s.at(i) == '-')) ++i;
         const std::size_t exp{i};
-        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s.at(i)))) ++i;
         if (exp == i) return false;
     }
 
@@ -161,7 +161,7 @@ void skip_ws(std::string_view s, std::size_t& i) {
     skip_ws(s, i);
     if (i >= s.size()) return false;
 
-    switch (s[i]) {
+    switch (s.at(i)) {
         case '"': return parse_string(s, i);
         case '{': return parse_object(s, i);
         case '[': return parse_array(s, i, nullptr);

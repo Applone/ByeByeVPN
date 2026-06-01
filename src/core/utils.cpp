@@ -97,10 +97,10 @@ void enable_vt() {
 void banner() {
     tee_printf("%s%s", col(C::BOLD), col(C::MAG));
     tee_puts(" ____             ____           __     ______  _   _ ");
-    tee_puts("| __ ) _   _  ___| __ ) _   _  __\\ \\   / /  _ \\| \\ | |");
-    tee_puts("|  _ \\| | | |/ _ \\  _ \\| | | |/ _ \\ \\ / /| |_) |  \\| |");
+    tee_puts(R"(| __ ) _   _  ___| __ ) _   _  __\ \   / /  _ \| \ | |)");
+    tee_puts(R"(|  _ \| | | |/ _ \  _ \| | | |/ _ \ \ / /| |_) |  \| |)");
     tee_puts("| |_) | |_| |  __/ |_) | |_| |  __/\\ V / |  __/| |\\  |");
-    tee_puts("|____/ \\__, |\\___|____/ \\__, |\\___| \\_/  |_|   |_| \\_|");
+    tee_puts(R"(|____/ \__, |\___|____/ \__, |\___| \_/  |_|   |_| \_|)");
     tee_puts("       |___/            |___/                          ");
     tee_printf("%s", col(C::RST));
     tee_printf("%s  VPN detectability scanner  v1.1.1%s\n\n",
@@ -163,8 +163,8 @@ void banner() {
     result.reserve(data.size() * (spaces ? 3 : 2));
     
     for (std::size_t i{0}; i < data.size(); ++i) {
-        result += hex_chars[(data[i] >> 4) & 0xF];
-        result += hex_chars[data[i] & 0xF];
+        result += hex_chars.at((data.data()[i] >> 4) & 0xF);
+        result += hex_chars.at(data.data()[i] & 0xF);
         if (spaces && i + 1 < data.size()) {
             result += ' ';
         }
@@ -188,8 +188,8 @@ void banner() {
             out.push_back(static_cast<char>(c));
         } else {
             out.push_back('%');
-            out.push_back(hex_chars[(c >> 4) & 0x0F]);
-            out.push_back(hex_chars[c & 0x0F]);
+            out.push_back(hex_chars.at((c >> 4) & 0x0F));
+            out.push_back(hex_chars.at(c & 0x0F));
         }
     }
     
@@ -223,7 +223,7 @@ struct Value {
         if (pos + 4 > s.size()) return -1;
         int val = 0;
         for (int k = 0; k < 4; ++k) {
-            const int d = hex_val(s[pos + k]);
+            const int d = hex_val(s.at(pos + k));
             if (d < 0) return -1;
             val = (val << 4) | d;
         }
@@ -251,8 +251,8 @@ struct Value {
     };
     
     for (std::size_t i{0}; i < s.size(); ++i) {
-        if (s[i] == '\\' && i + 1 < s.size()) {
-            char c{s[++i]};
+        if (s.at(i) == '\\' && i + 1 < s.size()) {
+            char c{s.at(++i)};
             switch (c) {
                 case 'b': result += '\b'; break;
                 case 'f': result += '\f'; break;
@@ -270,7 +270,7 @@ struct Value {
                     i += 4;
                     // Check for UTF-16 surrogate pair
                     if (u1 >= 0xD800 && u1 <= 0xDBFF &&
-                        i + 2 < s.size() && s[i + 1] == '\\' && s[i + 2] == 'u') {
+                        i + 2 < s.size() && s.at(i + 1) == '\\' && s.at(i + 2) == 'u') {
                         const int u2 = parse_u16(i + 3);
                         if (u2 >= 0xDC00 && u2 <= 0xDFFF) {
                             const uint32_t cp = 0x10000 +
@@ -289,58 +289,58 @@ struct Value {
                     break;
             }
         } else {
-            result += s[i];
+            result += s.at(i);
         }
     }
     return result;
 }
 
 Value parse(std::string_view b, std::size_t& i) {
-    while (i < b.size() && std::isspace(static_cast<unsigned char>(b[i]))) ++i;
+    while (i < b.size() && std::isspace(static_cast<unsigned char>(b.at(i)))) ++i;
     
     Value v;
     if (i >= b.size()) return v;
     
-    if (b[i] == '"') {
+    if (b.at(i) == '"') {
         std::size_t start{++i};
         bool escaped{false};
         while (i < b.size()) {
             if (escaped) {
                 escaped = false;
-            } else if (b[i] == '\\') {
+            } else if (b.at(i) == '\\') {
                 escaped = true;
-            } else if (b[i] == '"') {
+            } else if (b.at(i) == '"') {
                 break;
             }
             ++i;
         }
         v.s = unescape(b.substr(start, i - start));
         if (i < b.size()) ++i;
-    } else if (b[i] == '{') {
+    } else if (b.at(i) == '{') {
         v.is_obj = true;
         ++i;
-        while (i < b.size() && b[i] != '}') {
+        while (i < b.size() && b.at(i) != '}') {
             Value key{parse(b, i)};
-            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b[i])) || b[i] == ':')) ++i;
+            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b.at(i))) || b.at(i) == ':')) ++i;
             if (v.o.find(key.s) == v.o.end()) {
                 v.order.push_back(key.s);
             }
             v.o[key.s] = parse(b, i);
-            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b[i])) || b[i] == ',')) ++i;
+            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b.at(i))) || b.at(i) == ',')) ++i;
         }
         if (i < b.size()) ++i;
-    } else if (b[i] == '[') {
+    } else if (b.at(i) == '[') {
         v.is_arr = true;
         ++i;
-        while (i < b.size() && b[i] != ']') {
+        while (i < b.size() && b.at(i) != ']') {
             v.a.push_back(parse(b, i));
-            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b[i])) || b[i] == ',')) ++i;
+            while (i < b.size() && (std::isspace(static_cast<unsigned char>(b.at(i))) || b.at(i) == ',')) ++i;
         }
         if (i < b.size()) ++i;
     } else {
         std::size_t start{i};
-        while (i < b.size() && b[i] != ',' && b[i] != '}' && b[i] != ']' &&
-               !std::isspace(static_cast<unsigned char>(b[i]))) {
+        while (i < b.size() && b.at(i) != ',' && b.at(i) != '}' && b.at(i) != ']' &&
+               !std::isspace(static_cast<unsigned char>(b.at(i)))) {
             ++i;
         }
         v.s = std::string{b.substr(start, i - start)};

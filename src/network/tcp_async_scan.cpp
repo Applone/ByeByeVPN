@@ -31,7 +31,7 @@
 #else
 #include <arpa/inet.h>
 #include <csignal>
-#include <errno.h>
+#include <cerrno>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -55,7 +55,7 @@ struct WorkerResult {
 };
 
 struct PendingConnect {
-    SOCKET sock = INVALID_SOCKET;
+    SocketGuard sock;
     int port = 0;
     Clock::time_point started{};
 };
@@ -144,13 +144,10 @@ public:
 
     ~ThreadPool() {
         {
-            std::lock_guard<std::mutex> lock(mu_);
+            std::scoped_lock lock(mu_);
             stop_ = true;
         }
         cv_.notify_all();
-        for (auto& t : workers_) {
-            if (t.joinable()) t.join();
-        }
     }
 
     template <typename Fn>
@@ -161,7 +158,7 @@ public:
         std::future<Ret> fut = task->get_future();
 
         {
-            std::lock_guard<std::mutex> lock(mu_);
+            std::scoped_lock lock(mu_);
             tasks_.emplace([task] { (*task)(); });
         }
         cv_.notify_one();
@@ -170,7 +167,7 @@ public:
     }
 
 private:
-    std::vector<std::thread> workers_;
+    std::vector<std::jthread> workers_;
     std::queue<std::function<void()>> tasks_;
     std::mutex mu_;
     std::condition_variable cv_;
@@ -178,12 +175,7 @@ private:
 };
 
 #ifndef _WIN32
-void close_active_sockets(std::unordered_map<SOCKET, PendingConnect>& active) {
-    for (auto& [sock, _] : active) {
-        if (sock != INVALID_SOCKET) closesocket(sock);
-    }
-    active.clear();
-}
+// Active sockets managed strictly via RAII SocketGuard in PendingConnect
 #endif
 
 #ifndef _WIN32
@@ -198,7 +190,8 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
     WorkerResult out;
     if (ports.empty()) return out;
 
-    const int epfd = epoll_create1(0);
+    SocketGuard epfd_guard{epoll_create1(0)};
+    const int epfd = epfd_guard.get();
     if (epfd < 0) {
         out.scanned = ports.size();
         out.other = ports.size();
@@ -220,7 +213,8 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
         sockaddr_storage dst = base_addr;
         set_port(dst, port);
 
-        SOCKET s = socket(dst.ss_family, SOCK_STREAM, IPPROTO_TCP);
+        SocketGuard s_guard{socket(dst.ss_family, SOCK_STREAM, IPPROTO_TCP)};
+        SOCKET s = s_guard.get();
         if (s == INVALID_SOCKET) {
             ++out.other;
             mark_done();
@@ -236,7 +230,7 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
             TcpOpen o;
             o.port = port;
             o.connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
-            closesocket(s);
+            // s_guard closes socket automatically
             out.open.push_back(std::move(o));
             if (global_open) global_open->fetch_add(1, std::memory_order_relaxed);
             mark_done();
@@ -245,7 +239,7 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
 
         const int err = WSAGetLastError();
         if (!is_connect_in_progress_error(err)) {
-            closesocket(s);
+            // s_guard closes socket automatically
             if (is_refused_error(err)) ++out.refused;
             else ++out.other;
             mark_done();
@@ -256,19 +250,19 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
         ev.events = EPOLLOUT | EPOLLERR | EPOLLHUP;
         ev.data.fd = s;
         if (epoll_ctl(epfd, EPOLL_CTL_ADD, s, &ev) != 0) {
-            closesocket(s);
+            // s_guard closes socket automatically
             ++out.other;
             mark_done();
             return;
         }
 
-        active.emplace(s, PendingConnect{s, port, started});
+        active.emplace(s, PendingConnect{.sock=std::move(s_guard), .port=port, .started=started});
     };
 
     while ((next_idx < ports.size() || !active.empty()) && !stop_flag.load(std::memory_order_relaxed)) {
-        while (next_idx < ports.size() && static_cast<int>(active.size()) < max_inflight &&
+        while (next_idx < ports.size() && std::cmp_less(active.size(), max_inflight) &&
                !stop_flag.load(std::memory_order_relaxed)) {
-            launch_connect(ports[next_idx]);
+            launch_connect(ports.at(next_idx));
             ++next_idx;
         }
 
@@ -305,7 +299,7 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
                     ++out.other;
                 }
 
-                closesocket(s);
+                // Socket is closed automatically upon erasure from active map
                 active.erase(it);
                 mark_done();
             }
@@ -315,7 +309,7 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.started).count();
             if (elapsed >= timeout_ms) {
                 epoll_ctl(epfd, EPOLL_CTL_DEL, it->first, nullptr);
-                closesocket(it->first);
+                // Socket is closed automatically upon erasure from active map
                 ++out.timeouts;
                 mark_done();
                 it = active.erase(it);
@@ -329,8 +323,8 @@ WorkerResult scan_connect_worker_epoll(const sockaddr_storage& base_addr,
         out.aborted = true;
     }
 
-    close_active_sockets(active);
-    close(epfd);
+    active.clear();
+    // epfd is automatically closed by epfd_guard
     return out;
 }
 #endif
@@ -500,7 +494,7 @@ WorkerResult scan_connect_worker_iocp(const sockaddr_storage& base_addr,
     while ((next_idx < ports.size() || !active.empty()) && !stop_flag.load(std::memory_order_relaxed)) {
         while (next_idx < ports.size() && static_cast<int>(active.size()) < max_inflight &&
                !stop_flag.load(std::memory_order_relaxed)) {
-            launch_connect(ports[next_idx]);
+            launch_connect(ports.at(next_idx));
             ++next_idx;
         }
 
@@ -762,7 +756,7 @@ bool send_syn_packet(SOCKET raw_send,
                             0,
                             reinterpret_cast<const sockaddr*>(&dst),
                             sizeof(dst));
-    return sent == static_cast<int>(sizeof(frame));
+    return std::cmp_equal(sent ,sizeof(frame));
 }
 
 std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
@@ -827,7 +821,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
 
     auto alloc_src_port = [&]() -> uint16_t {
         for (int i = 0; i < 20000; ++i) {
-            const uint16_t p = static_cast<uint16_t>(40000 + ((src_port_cursor++ - 40000) % 20000));
+            const auto p = static_cast<uint16_t>(40000 + ((src_port_cursor++ - 40000) % 20000));
             if (pending.find(p) == pending.end()) return p;
         }
         return 0;
@@ -841,8 +835,8 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
             break;
         }
 
-        while (next_idx < ports.size() && static_cast<int>(pending.size()) < max_inflight) {
-            const int port = ports[next_idx++];
+        while (next_idx < ports.size() && std::cmp_less(pending.size(), max_inflight)) {
+            const int port = ports.at(next_idx++);
             const uint16_t src_port = alloc_src_port();
             if (src_port == 0) {
                 ++out.other;
@@ -857,7 +851,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
                 continue;
             }
 
-            pending.emplace(src_port, SynPending{port, src_port, Clock::now()});
+            pending.emplace(src_port, SynPending{.port=port, .src_port=src_port, .sent=Clock::now()});
         }
 
         pollfd pfd{};
@@ -879,13 +873,13 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
                                        &from_len);
                 if (n <= 0) break;
 
-                if (n < static_cast<int>(sizeof(iphdr) + sizeof(tcphdr))) continue;
+                if (std::cmp_less(n ,sizeof(iphdr) + sizeof(tcphdr))) continue;
 
                 const auto* iph = reinterpret_cast<const iphdr*>(buf);
                 if (iph->protocol != IPPROTO_TCP) continue;
 
                 const int ip_hlen = iph->ihl * 4;
-                if (ip_hlen < static_cast<int>(sizeof(iphdr)) || n < ip_hlen + static_cast<int>(sizeof(tcphdr))) continue;
+                if (std::cmp_less(ip_hlen ,sizeof(iphdr)) || n < ip_hlen + static_cast<int>(sizeof(tcphdr))) continue;
 
                 if (iph->saddr != dst.sin_addr.s_addr || iph->daddr != src.s_addr) continue;
 
@@ -947,7 +941,7 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
 
     const int inflight_total = std::clamp(threads, 64, 16384);
 
-    size_t hw = static_cast<size_t>(std::thread::hardware_concurrency());
+    auto hw = static_cast<size_t>(std::thread::hardware_concurrency());
     if (hw == 0) hw = 4;
 
     size_t workers = std::clamp<size_t>(static_cast<size_t>(inflight_total / 256), 1, hw * 2);
@@ -958,7 +952,7 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
 
     std::vector<std::vector<int>> shards(workers);
     for (size_t i = 0; i < ports.size(); ++i) {
-        shards[i % workers].push_back(ports[i]);
+        shards.at(i % workers).push_back(ports.at(i));
     }
 
     fprintf(stderr,
@@ -988,7 +982,7 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
 #ifdef _WIN32
             return scan_connect_worker_iocp(base_addr,
                                             base_len,
-                                            shards[i],
+                                            shards.at(i),
                                             timeout_ms,
                                             inflight_per_worker,
                                             stop_flag,
@@ -997,7 +991,7 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
 #else
             return scan_connect_worker_epoll(base_addr,
                                              base_len,
-                                             shards[i],
+                                             shards.at(i),
                                              timeout_ms,
                                              inflight_per_worker,
                                              stop_flag,
@@ -1026,10 +1020,10 @@ WorkerResult run_connect_scan_with_pool(const sockaddr_storage& base_addr,
 #endif
 
         for (size_t i = 0; i < futures.size(); ++i) {
-            if (taken[i]) continue;
-            if (futures[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-                WorkerResult wr = futures[i].get();
-                taken[i] = true;
+            if (taken.at(i)) continue;
+            if (futures.at(i).wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                WorkerResult wr = futures.at(i).get();
+                taken.at(i) = true;
                 ++done;
 
                 total.scanned += wr.scanned;
@@ -1099,7 +1093,7 @@ std::vector<TcpOpen> scan_tcp_async(const std::string& host,
         auto syn_res = scan_syn_half_open_linux(host, ports, to_ms, syn_inflight, &syn_scanned, &syn_open);
         if (syn_res.has_value()) {
             open = std::move(syn_res->open);
-            std::sort(open.begin(), open.end(), [](const TcpOpen& a, const TcpOpen& b) { return a.port < b.port; });
+            std::ranges::sort(open, [](const TcpOpen& a, const TcpOpen& b) { return a.port < b.port; });
 
             const size_t scanned = syn_res->scanned;
             const bool skipped = syn_res->aborted || scanned < ports.size();
@@ -1142,7 +1136,7 @@ std::vector<TcpOpen> scan_tcp_async(const std::string& host,
     WorkerResult total = run_connect_scan_with_pool(base_addr, base_len, ports, threads, to_ms);
 
     open = std::move(total.open);
-    std::sort(open.begin(), open.end(), [](const TcpOpen& a, const TcpOpen& b) { return a.port < b.port; });
+    std::ranges::sort(open, [](const TcpOpen& a, const TcpOpen& b) { return a.port < b.port; });
 
     const size_t scanned = total.scanned;
     const bool skipped = total.aborted || scanned < ports.size();

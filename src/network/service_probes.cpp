@@ -14,7 +14,7 @@
     out.reserve(std::min(s.size(), lim));
     
     for (std::size_t i{0}; i < s.size() && out.size() < lim; ++i) {
-        const char c{s[i]};
+        const char c{s.at(i)};
         if (c >= 32 && c < 127) {
             out += c;
         } else if (c == '\r') {
@@ -64,7 +64,7 @@
         return f;
     }
     
-    buf[static_cast<std::size_t>(n)] = '\0';
+    buf.at(static_cast<std::size_t>(n)) = '\0';
     const std::string resp{buf.data(), static_cast<std::size_t>(n)};
     const std::string first{resp.substr(0, resp.find('\n'))};
     
@@ -116,7 +116,7 @@
             std::array<char, 256> buf{};
             const int n{tcp_recv_to(s, buf.data(), static_cast<int>(buf.size() - 1), 1500)};
             if (n > 0) {
-                buf[static_cast<std::size_t>(n)] = '\0';
+                buf.at(static_cast<std::size_t>(n)) = '\0';
                 b.assign(buf.data(), static_cast<std::size_t>(n));
             }
         }
@@ -165,24 +165,24 @@
         return f;
     }
     
-    if (reply[0] == 0x05 && n >= 2) {
+    if (reply.at(0) == 0x05 && n >= 2) {
         f.service = "SOCKS5";
         f.details = "methods=0x" + hex_s(reply.data() + 1, 1);
         
-        if (reply[1] == 0x00) {
+        if (reply.at(1) == 0x00) {
             f.details += " (no-auth)";
-        } else if (reply[1] == 0x02) {
+        } else if (reply.at(1) == 0x02) {
             f.details += " (user/pass)";
-        } else if (reply[1] == 0xFF) {
+        } else if (reply.at(1) == 0xFF) {
             f.details += " (no acceptable)";
         }
         
         f.is_vpn_like = true;
-    } else if (reply[0] == 0x05) {
+    } else if (reply.at(0) == 0x05) {
         f.service = "SOCKS5";
         f.details = "short greeting";
         f.is_vpn_like = true;
-    } else if (reply[0] == 0x04) {
+    } else if (reply.at(0) == 0x04) {
         f.service = "SOCKS4";
         f.is_vpn_like = true;
     } else {
@@ -226,7 +226,7 @@
         return f;
     }
 
-    buf[static_cast<std::size_t>(n)] = '\0';
+    buf.at(static_cast<std::size_t>(n)) = '\0';
     const std::string resp{buf.data(), static_cast<std::size_t>(n)};
     const auto nl{resp.find('\n')};
     const std::string first{trim(resp.substr(0, nl == std::string::npos ? resp.size() : nl))};
@@ -244,9 +244,9 @@
         const std::string code{first.substr(p1 + 1, (p2 == std::string::npos ? first.size() : p2) - (p1 + 1))};
         
         if (code.size() == 3 &&
-            std::isdigit(static_cast<unsigned char>(code[0])) &&
-            std::isdigit(static_cast<unsigned char>(code[1])) &&
-            std::isdigit(static_cast<unsigned char>(code[2]))) {
+            std::isdigit(static_cast<unsigned char>(code.at(0))) &&
+            std::isdigit(static_cast<unsigned char>(code.at(1))) &&
+            std::isdigit(static_cast<unsigned char>(code.at(2)))) {
             status = std::atoi(code.c_str());
         }
     }

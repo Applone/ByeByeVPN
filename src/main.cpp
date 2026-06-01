@@ -30,8 +30,10 @@
 
 #if __cplusplus >= 202002L && __has_include(<format>)
 #include <format>
-#define BYEBYEVPN_HAS_STD_FORMAT 1
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define BYEBYEVPN_HAS_STD_FORMAT 1 
 #else
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define BYEBYEVPN_HAS_STD_FORMAT 0
 #endif
 
@@ -41,15 +43,19 @@ using std::set;
 using std::string;
 using std::vector;
 
-class Cleanup {
-public:
-    ~Cleanup() {
-        if (g_save_fp) {
-            fprintf(g_save_fp, "```\n");
-            fclose(g_save_fp);
+struct FileDeleter {
+    void operator()(FILE* fp) const noexcept {
+        if (fp) {
+            fprintf(fp, "```\n");
+            fclose(fp);
             fprintf(stderr, "saved to %s\n", g_save_path.c_str());
             g_save_fp = nullptr;
         }
+    }
+};
+
+struct OpenSSLGuard {
+    ~OpenSSLGuard() {
         openssl_runtime_cleanup();
         fflush(stdout);
         fflush(stderr);
@@ -75,7 +81,7 @@ void clamp_threads_to_nofile_limit() {
     if (getrlimit(RLIMIT_NOFILE, &lim) != 0) return;
     if (lim.rlim_cur == RLIM_INFINITY) return;
 
-    const rlim_t reserve = static_cast<rlim_t>(kNofileReserve);
+    const auto reserve = static_cast<rlim_t>(kNofileReserve);
     if (lim.rlim_cur <= reserve) {
         if (g_threads != kMinThreadCount) {
             g_threads = kMinThreadCount;
@@ -119,12 +125,15 @@ void clamp_threads_to_nofile_limit() {
     static const set<string> cmds = {
         "scan", "full", "ports", "udp", "tls", "j3", "geoip", "help"
     };
-    if (pos.size() >= 2 && cmds.count(pos[0])) {
-        if (pos[0] == "help") return {};
-        return pos[1];
+    
+     // NOLINTBEGIN(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+    if (pos.size() >= 2 && cmds.count(pos[0])) { 
+        if (pos[0] == "help") return {}; 
+        return pos[1]; 
     }
-    if (pos[0] == "help") return {};
-    return pos[0];
+    if (pos[0] == "help") return {}; 
+    return pos[0]; 
+    // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 }
 
 [[nodiscard]] string default_save_path_for_target(std::string_view target) {
@@ -240,7 +249,7 @@ void help() {
 void pause_for_enter() {
     tee_printf("\n%s[Enter] to continue...%s", col(C::DIM), col(C::RST));
     fflush(stdout);
-    int c;
+    int c = 0;
     while ((c = getchar()) != EOF && c != '\n') {}
 }
 
@@ -284,11 +293,11 @@ void interactive() {
         tee_printf("  %s[4]%s  TLS + SNI consistency — Reality discriminator\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[5]%s  J3 active probing     — active junk probes\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[6]%s  GeoIP lookup          — country / ASN aggregation\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s[0]%s  Exit\n\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s.at(0)%s  Exit\n\n", col(C::CYN), col(C::RST));
 
         const string s = ask("  > ");
         if (s.empty()) continue;
-        const char c = s[0];
+        const char c = s.at(0);
 
         if (c == '0' || c == 'q' || c == 'Q') break;
 
@@ -453,7 +462,8 @@ int main_impl(int argc, char** argv) {
         return 2;
     }
 
-    Cleanup cleanup_guard;
+    OpenSSLGuard openssl_guard;
+    std::unique_ptr<FILE, FileDeleter> file_guard;
 
     vector<string> pos;
     for (int i = 1; i < argc; ++i) {
@@ -499,7 +509,7 @@ int main_impl(int argc, char** argv) {
             g_save_requested = true;
             if (i + 1 < argc) {
                 const string nxt = argv[i + 1];
-                if (!nxt.empty() && nxt[0] != '-') {
+                if (!nxt.empty() && !nxt.starts_with("-")) {
                     g_save_path = nxt;
                     ++i;
                 }
@@ -558,6 +568,7 @@ int main_impl(int argc, char** argv) {
         string path = g_save_path;
         if (path.empty()) path = default_save_path_for_target(target);
         g_save_fp = fopen(path.c_str(), "w");
+        file_guard.reset(g_save_fp);
         if (!g_save_fp) {
             fprintf(stderr, "warn: --save: cannot open '%s' for writing (%s); continuing without save\n",
                     path.c_str(), strerror(errno));
@@ -584,21 +595,21 @@ int main_impl(int argc, char** argv) {
     if (pos.empty()) {
         interactive();
     } else {
-        const string& cmd = pos[0];
+        const string& cmd = pos.at(0);
 
         if (cmd == "scan" || cmd == "full") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
                 return 2;
             }
-            (void)run_full_target(pos[1]);
+            (void)run_full_target(pos.at(1));
         } else if (cmd == "ports") {
             if (pos.size() < 2) {
                 tee_printf("need target\n");
                 return 2;
             }
-            const auto rs = resolve_host(pos[1]);
-            const auto op = scan_tcp(rs.primary_ip.empty() ? pos[1] : rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
+            const auto rs = resolve_host(pos.at(1));
+            const auto op = scan_tcp(rs.primary_ip.empty() ? pos.at(1) : rs.primary_ip, build_tcp_ports(), g_threads, g_tcp_to);
             for (const auto& o : op) {
                 tee_printf("  :%-5d  %lldms  %s\n", o.port, o.connect_ms, port_hint(o.port));
             }
@@ -607,8 +618,8 @@ int main_impl(int argc, char** argv) {
                 tee_printf("need target\n");
                 return 2;
             }
-            const auto rs = resolve_host(pos[1]);
-            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            const auto rs = resolve_host(pos.at(1));
+            const string ip = rs.primary_ip.empty() ? pos.at(1) : rs.primary_ip;
             show_udp_wg(ip);
         } else if (cmd == "tls") {
             if (pos.size() < 2) {
@@ -616,13 +627,13 @@ int main_impl(int argc, char** argv) {
                 return 2;
             }
             int port = 443;
-            if (pos.size() >= 3 && !try_parse_int(pos[2], port, kMinPortNumber, kMaxPortNumber)) {
-                fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
+            if (pos.size() >= 3 && !try_parse_int(pos.at(2), port, kMinPortNumber, kMaxPortNumber)) {
+                fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos.at(2).c_str());
                 return 2;
             }
-            const auto rs = resolve_host(pos[1]);
-            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
-            const auto tp = tls_probe(ip, port, pos[1]);
+            const auto rs = resolve_host(pos.at(1));
+            const string ip = rs.primary_ip.empty() ? pos.at(1) : rs.primary_ip;
+            const auto tp = tls_probe(ip, port, pos.at(1));
             if (!tp.ok) {
                 tee_printf("TLS fail: %s\n", tp.err.c_str());
                 return 1;
@@ -633,7 +644,7 @@ int main_impl(int argc, char** argv) {
             tee_printf("  issuer: %s\n", tp.cert_issuer.c_str());
             tee_printf("  sha256: %s\n", tp.cert_sha256.c_str());
 
-            const auto sc = sni_consistency(ip, port, pos[1]);
+            const auto sc = sni_consistency(ip, port, pos.at(1));
             for (const auto& e : sc.entries) {
 #if BYEBYEVPN_HAS_STD_FORMAT
                 const std::string sha = e.ok ? std::format("sha:{}", e.sha.substr(0, 16)) : "fail";
@@ -660,12 +671,12 @@ int main_impl(int argc, char** argv) {
                 return 2;
             }
             int port = 443;
-            if (pos.size() >= 3 && !try_parse_int(pos[2], port, kMinPortNumber, kMaxPortNumber)) {
-                fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos[2].c_str());
+            if (pos.size() >= 3 && !try_parse_int(pos.at(2), port, kMinPortNumber, kMaxPortNumber)) {
+                fprintf(stderr, "Error: invalid port '%s' (expected 1-65535)\n", pos.at(2).c_str());
                 return 2;
             }
-            const auto rs = resolve_host(pos[1]);
-            const string ip = rs.primary_ip.empty() ? pos[1] : rs.primary_ip;
+            const auto rs = resolve_host(pos.at(1));
+            const string ip = rs.primary_ip.empty() ? pos.at(1) : rs.primary_ip;
             const auto probes = j3_probes(ip, port);
             for (const auto& p : probes) {
                 tee_printf("  %-28s  %s  %dB %s\n",
@@ -675,7 +686,7 @@ int main_impl(int argc, char** argv) {
                            p.responded ? printable_prefix(p.first_line, 60).c_str() : "(dropped)");
             }
         } else if (cmd == "geoip") {
-            const string ip = pos.size() >= 2 ? pos[1] : "";
+            const string ip = pos.size() >= 2 ? pos.at(1) : "";
             auto f1 = std::async(std::launch::async, geo_ipapi_is, ip);
             auto f2 = std::async(std::launch::async, geo_iplocate, ip);
             auto f3 = std::async(std::launch::async, geo_freeipapi, ip);

@@ -230,7 +230,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
             const unsigned long e{ERR_get_error()};
             std::array<char, 256> buf{};
             ERR_error_string_n(e, buf.data(), buf.size());
-            r.err = buf[0] ? std::string{buf.data()} : "tls handshake failed";
+            r.err = buf.at(0) ? std::string{buf.data()} : "tls handshake failed";
             r.err += " (ssl_err=" + std::to_string(ssl_err_code) + ")";
         }
         return r;
@@ -300,7 +300,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
                     const int ul{ASN1_STRING_to_UTF8(&us, g->d.dNSName)};
                     if (ul > 0 && us) {
                         std::string name{reinterpret_cast<char*>(us), static_cast<std::size_t>(ul)};
-                        if (name.size() > 2 && name[0] == '*' && name[1] == '.') {
+                        if (name.starts_with("*.")) {
                             r.is_wildcard = true;
                         }
                         r.san.push_back(std::move(name));
@@ -315,7 +315,7 @@ using GeneralNamesPtr = std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter>;
         
         // Check wildcard in CN
         if (!r.is_wildcard && r.subject_cn.size() > 2 &&
-            r.subject_cn[0] == '*' && r.subject_cn[1] == '.') {
+            r.subject_cn.starts_with("*.")) {
             r.is_wildcard = true;
         }
     }

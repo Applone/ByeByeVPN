@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <ranges>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,7 +47,7 @@ inline constexpr std::size_t kMaxResponseSize{1024 * 1024};  // 1 MB
 // Check if string is an IP literal (IPv4 or IPv6)
 [[nodiscard]] bool is_ip_literal(std::string_view host) noexcept {
     if (host.empty()) return false;
-    if (host[0] == '[') return false;  // IPv6 in brackets not directly supported
+    if (host.starts_with("[")) return false;  // IPv6 in brackets not directly supported
     return is_ipv4_literal(host) || host.find(':') != std::string_view::npos;
 }
 
@@ -101,7 +102,7 @@ void set_socket_timeouts(SOCKET s, int timeout_ms) {
     
     std::string msg{op};
     msg += " err=" + std::to_string(ssl_err);
-    if (buf[0]) {
+    if (buf.at(0)) {
         msg += " ";
         msg += buf.data();
     }
@@ -163,9 +164,8 @@ void set_socket_timeouts(SOCKET s, int timeout_ms) {
     for (const char* path : kCaBundleCandidates) {
         if (!path || !*path) continue;
         
-        FILE* fp{std::fopen(path, "rb")};
+        std::unique_ptr<FILE, decltype(&std::fclose)> fp{std::fopen(path, "rb"), &std::fclose};
         if (!fp) continue;
-        std::fclose(fp);
 
         ERR_clear_error();
         if (SSL_CTX_load_verify_locations(ctx, path, nullptr) == 1) {
@@ -264,7 +264,7 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
         } else {
             path = std::string{u.substr(split_pos)};
         }
-        if (path.empty() || path[0] != '/') {
+        if (path.empty() || path.at(0) != '/') {
             path = "/" + path;
         }
     } else {
@@ -282,14 +282,14 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
     }
 
     // Handle IPv6 addresses in brackets
-    if (host[0] == '[') {
+    if (host.starts_with("[")) {
         const auto close{host.find(']')};
         if (close == std::string::npos) {
             result.err = "bad host";
             return result;
         }
         if (close + 1 < host.size()) {
-            if (host[close + 1] != ':') {
+            if (host.at(close + 1) != ':') {
                 result.err = "bad host";
                 return result;
             }
@@ -421,13 +421,13 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
             result.err = ssl_error_message(ssl.get(), wrote, "ssl_write");
             return result;
         }
-        if (wrote != static_cast<int>(req.size())) {
+        if (std::cmp_not_equal(wrote ,req.size())) {
             result.err = "ssl_write partial";
             return result;
         }
     } else {
         const int sent{tcp_send_all(s, req.data(), static_cast<int>(req.size()))};
-        if (sent != static_cast<int>(req.size())) {
+        if (std::cmp_not_equal(sent ,req.size())) {
             result.err = "send " + std::to_string(WSAGetLastError());
             return result;
         }
@@ -477,9 +477,9 @@ using SslPtr = std::unique_ptr<SSL, SslDeleter>;
                 };
                 const std::string status_str_s{status_str};
                 if (status_str.size() == 3 &&
-                    std::isdigit(static_cast<unsigned char>(status_str[0])) &&
-                    std::isdigit(static_cast<unsigned char>(status_str[1])) &&
-                    std::isdigit(static_cast<unsigned char>(status_str[2]))) {
+                    std::isdigit(static_cast<unsigned char>(status_str.at(0))) &&
+                    std::isdigit(static_cast<unsigned char>(status_str.at(1))) &&
+                    std::isdigit(static_cast<unsigned char>(status_str.at(2)))) {
                     char* endptr{nullptr};
                     const long val{std::strtol(status_str_s.c_str(), &endptr, 10)};
                     if (endptr != status_str_s.c_str() && *endptr == '\0') {

@@ -19,7 +19,7 @@ namespace {
     if (name.empty() || pat.empty()) return false;
     
     // Wildcard pattern
-    if (pat.size() > 2 && pat[0] == '*' && pat[1] == '.') {
+    if (pat.starts_with("*.")) {
         const std::string_view suffix{pat.substr(1)};
         if (name.size() <= suffix.size()) return false;
         

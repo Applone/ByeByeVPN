@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -43,7 +44,7 @@ void set_socket_timeouts(SOCKET s, int to_ms) {
     
     std::string msg{op};
     msg += " err=" + std::to_string(ssl_err);
-    if (buf[0] != '\0') {
+    if (buf.at(0) != '\0') {
         msg += " ";
         msg += buf.data();
     }
@@ -186,7 +187,7 @@ inline constexpr std::array<unsigned char, 9> kAlpnHttp11{
         r.err = ssl_error_message(ssl.get(), wrote, "ssl_write");
         return r;
     }
-    if (wrote != static_cast<int>(req.size())) {
+    if (std::cmp_not_equal(wrote ,req.size())) {
         r.err = "ssl_write partial";
         return r;
     }
@@ -225,8 +226,8 @@ inline constexpr std::array<unsigned char, 9> kAlpnHttp11{
         r.http_version = r.first_line.substr(0, sp == std::string::npos ? r.first_line.size() : sp);
         
         if (r.http_version.size() >= 8) {
-            const char x{r.http_version[5]};
-            const char y{r.http_version[7]};
+            const char x{r.http_version.at(5)};
+            const char y{r.http_version.at(7)};
             if (!(x == '1' || x == '2') || !(y == '0' || y == '1')) {
                 r.version_anomaly = true;
             }
