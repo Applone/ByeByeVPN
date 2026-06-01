@@ -33,7 +33,7 @@ namespace {
     SOCKET s{tcp_connect(std::string{host}, port, g_tcp_to, err)};
     if (s == INVALID_SOCKET) return r;
     
-    SocketGuard guard{s};
+    [[maybe_unused]] SocketGuard guard{s};
     
     if (!data.empty()) {
         if (tcp_send_all(s, data.data(), static_cast<int>(data.size())) != static_cast<int>(data.size())) {
@@ -126,7 +126,7 @@ namespace {
         r.name = "empty/close";
         
         if (s != INVALID_SOCKET) {
-            SocketGuard guard{s};
+            [[maybe_unused]] SocketGuard guard{s};
             std::array<char, 128> buf{};
             const int n{tcp_recv_to(s, buf.data(), static_cast<int>(buf.size() - 1), 800)};
             

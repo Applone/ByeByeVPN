@@ -163,7 +163,7 @@ class TerminalUI:
             return
         # Reserve the UI region, park the cursor at its top, and save it.
         sys.stdout.write("\n" * self.ui_lines)
-        sys.stdout.write(f"\033[{self.ui_lines}A\0337")
+        sys.stdout.write(f"\033[{self.ui_lines}A\0337\033[?25l")
         sys.stdout.flush()
         self.ui_active = True
         self.ui_paused = False
@@ -172,7 +172,7 @@ class TerminalUI:
         """Move below the UI region so normal output can follow it."""
         if not self.tty or not self.ui_active or self.ui_paused:
             return
-        sys.stdout.write(f"\0338\033[{self.ui_lines}B\n")
+        sys.stdout.write(f"\0338\033[{self.ui_lines}B\n\033[?25h")
         sys.stdout.flush()
         self.ui_paused = True
 
@@ -180,7 +180,7 @@ class TerminalUI:
         """Clear the UI region and park the cursor at its original position."""
         if not self.tty or not self.ui_active or self.ui_paused:
             return
-        sys.stdout.write("\0338\033[J")
+        sys.stdout.write("\0338\033[J\033[?25h")
         sys.stdout.flush()
         self.ui_paused = True
 
@@ -541,13 +541,10 @@ class ByeByeVPNBuildSteps:
         ], stage, log_file=log_file)
 
     async def do_clangtidy(self, stage: Stage, log_file) -> None:
-        sources = sorted(str(p) for p in self.cwd.glob("src/**/*.cpp"))
-        if not sources:
-            return
         await self.runner.run([
-            "clang-tidy", "-p", "build",
-            "--checks=clang-analyzer-*,clang-diagnostic-*",
-            "-warnings-as-errors=*", *sources,
+            "run-clang-tidy", "-p", "build", "-j", str(os.cpu_count() or 1),
+            "-checks=clang-analyzer-*,clang-diagnostic-*",
+            "-warnings-as-errors=*",
         ], stage, log_file=log_file)
 
     async def do_build_debug(self, stage: Stage, log_file) -> None:

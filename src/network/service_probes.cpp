@@ -42,7 +42,7 @@
         f.silent = true;
         return f;
     }
-    SocketGuard guard{s};
+    [[maybe_unused]] SocketGuard guard{s};
     
     const std::string req{
         "GET / HTTP/1.1\r\n"
@@ -112,7 +112,7 @@
         SOCKET s{tcp_connect(host_str, port, g_tcp_to, err)};
         
         if (s != INVALID_SOCKET) {
-            SocketGuard guard{s};
+            [[maybe_unused]] SocketGuard guard{s};
             std::array<char, 256> buf{};
             const int n{tcp_recv_to(s, buf.data(), static_cast<int>(buf.size() - 1), 1500)};
             if (n > 0) {
@@ -148,7 +148,7 @@
         f.silent = true;
         return f;
     }
-    SocketGuard guard{s};
+    [[maybe_unused]] SocketGuard guard{s};
     
     // SOCKS5 greeting: version 5, 2 methods (no-auth, user/pass)
     constexpr std::array<unsigned char, 4> greet{0x05, 0x02, 0x00, 0x02};
@@ -204,7 +204,7 @@
         f.silent = true;
         return f;
     }
-    SocketGuard guard{s};
+    [[maybe_unused]] SocketGuard guard{s};
 
     const std::string req{
         "CONNECT example.com:443 HTTP/1.1\r\n"

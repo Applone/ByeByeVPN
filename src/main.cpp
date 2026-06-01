@@ -55,11 +55,11 @@ struct FileDeleter {
 };
 
 struct OpenSSLGuard {
-    ~OpenSSLGuard() {
+    std::unique_ptr<void, decltype([](void*){
         openssl_runtime_cleanup();
         fflush(stdout);
         fflush(stderr);
-    }
+    })> guard{this};
 };
 
 [[nodiscard]] bool try_parse_int(std::string_view s, int& out, const int min_v, const int max_v) {
@@ -462,7 +462,7 @@ int main_impl(int argc, char** argv) {
         return 2;
     }
 
-    OpenSSLGuard openssl_guard;
+    [[maybe_unused]] OpenSSLGuard openssl_guard;
     std::unique_ptr<FILE, FileDeleter> file_guard;
 
     vector<string> pos;

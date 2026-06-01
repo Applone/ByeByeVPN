@@ -3,6 +3,9 @@
 // Socket abstraction layer for cross-platform compatibility
 // Using C++20 features: concepts, constexpr, RAII
 
+#include <concepts>
+#include <memory>
+
 #ifdef _WIN32
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -13,32 +16,22 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 
-#include <concepts>
-
 namespace socket_sys {
 
 // RAII wrapper for Winsock initialization - Rule of Zero via unique_ptr-like semantics
 class WinsockRuntime {
 public:
-    WinsockRuntime() noexcept : ready_{WSAStartup(MAKEWORD(2, 2), &ws_data_) == 0} {}
-    
-    ~WinsockRuntime() {
-        if (ready_) {
-            WSACleanup();
+    WinsockRuntime() noexcept {
+        WSADATA ws_data;
+        if (WSAStartup(MAKEWORD(2, 2), &ws_data) == 0) {
+            handle_.reset(this);
         }
     }
     
-    // Non-copyable, non-movable (singleton semantics)
-    WinsockRuntime(const WinsockRuntime&) = delete;
-    WinsockRuntime& operator=(const WinsockRuntime&) = delete;
-    WinsockRuntime(WinsockRuntime&&) = delete;
-    WinsockRuntime& operator=(WinsockRuntime&&) = delete;
-    
-    [[nodiscard]] constexpr bool ready() const noexcept { return ready_; }
+    [[nodiscard]] inline bool ready() const noexcept { return handle_ != nullptr; }
 
 private:
-    WSADATA ws_data_{};
-    bool ready_{false};
+    std::unique_ptr<void, decltype([](void*){ WSACleanup(); })> handle_;
 };
 
 // Global runtime instance with inline variable (C++17/20)
@@ -62,7 +55,7 @@ inline const WinsockRuntime g_winsock_runtime{};
 #include <fcntl.h>
 #include <cerrno>
 
-#include <concepts>
+
 
 // Type aliases for POSIX compatibility with Windows API
 using SOCKET = int;
@@ -70,7 +63,7 @@ inline constexpr SOCKET INVALID_SOCKET{-1};
 inline constexpr int SOCKET_ERROR{-1};
 
 // Function compatibility macros
-inline int closesocket(SOCKET s) noexcept { return ::close(s); }
+inline int closesocket(SOCKET s) noexcept { return s < 0 ? -1 : ::close(s); }
 
 // Error code compatibility
 [[nodiscard]] inline int WSAGetLastError() noexcept { return errno; }
@@ -112,57 +105,49 @@ inline void set_nonblocking(SOCKET s, bool nb) noexcept {
 }
 
 // RAII socket guard for automatic cleanup
+struct SocketHandle {
+    SOCKET s{INVALID_SOCKET};
+    SocketHandle() = default;
+    SocketHandle(std::nullptr_t) noexcept {}
+    explicit SocketHandle(SOCKET sock) noexcept : s{sock} {}
+    explicit operator bool() const noexcept { return s != INVALID_SOCKET; }
+    bool operator==(std::nullptr_t) const noexcept { return s == INVALID_SOCKET; }
+    bool operator!=(std::nullptr_t) const noexcept { return s != INVALID_SOCKET; }
+    bool operator==(const SocketHandle& o) const noexcept { return s == o.s; }
+    bool operator!=(const SocketHandle& o) const noexcept { return s != o.s; }
+};
+
+struct SocketDeleter {
+    using pointer = SocketHandle;
+    void operator()(SocketHandle h) const noexcept {
+        if (h.s != INVALID_SOCKET) {
+            closesocket(h.s);
+        }
+    }
+};
+
 class SocketGuard {
 public:
-    explicit SocketGuard(SOCKET s = INVALID_SOCKET) noexcept : socket_{s} {}
+    explicit SocketGuard(SOCKET s = INVALID_SOCKET) noexcept 
+        : socket_{s == INVALID_SOCKET ? nullptr : SocketHandle{s}} {}
     
-    ~SocketGuard() {
-        close();
-    }
-    
-    // Non-copyable
-    SocketGuard(const SocketGuard&) = delete;
-    SocketGuard& operator=(const SocketGuard&) = delete;
-    
-    // Movable
-    SocketGuard(SocketGuard&& other) noexcept : socket_{other.release()} {}
-    
-    SocketGuard& operator=(SocketGuard&& other) noexcept {
-        if (this != &other) {
-            close();
-            socket_ = other.release();
-        }
-        return *this;
-    }
-    
-    [[nodiscard]] SOCKET get() const noexcept { return socket_; }
-    [[nodiscard]] bool valid() const noexcept { return socket_ != INVALID_SOCKET; }
+    [[nodiscard]] SOCKET get() const noexcept { return socket_.get().s; }
+    [[nodiscard]] bool valid() const noexcept { return socket_ != nullptr; }
     [[nodiscard]] explicit operator bool() const noexcept { return valid(); }
     
-    SOCKET release() noexcept {
-        SOCKET s{socket_};
-        socket_ = INVALID_SOCKET;
-        return s;
-    }
+    SOCKET release() noexcept { return socket_.release().s; }
     
     void reset(SOCKET s = INVALID_SOCKET) noexcept {
-        close();
-        socket_ = s;
+        socket_.reset(s == INVALID_SOCKET ? nullptr : SocketHandle{s});
     }
     
-    void close() noexcept {
-        if (socket_ != INVALID_SOCKET) {
-            closesocket(socket_);
-            socket_ = INVALID_SOCKET;
-        }
-    }
+    void close() noexcept { socket_.reset(); }
 
 private:
-    SOCKET socket_;
+    std::unique_ptr<SocketHandle, SocketDeleter> socket_;
 };
 
 // RAII wrapper for addrinfo (centralized — used by dns, tcp_scanner, udp_scanner)
-#include <memory>
 struct AddrInfoDeleter {
     void operator()(addrinfo* ai) const noexcept {
         if (ai) ::freeaddrinfo(ai);

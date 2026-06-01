@@ -38,7 +38,6 @@ Checks: >
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
   -cppcoreguidelines-narrowing-conversions,
   -cppcoreguidelines-owning-memory,
-  -cppcoreguidelines-special-member-functions,
   -modernize-avoid-variadic-functions,
   -cppcoreguidelines-avoid-c-arrays,
   -modernize-avoid-c-arrays,

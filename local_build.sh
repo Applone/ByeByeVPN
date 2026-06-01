@@ -425,8 +425,8 @@ do_cppcheck() {
 }
 
 do_clangtidy() {
-    find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build \
-        --checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*'
+    run-clang-tidy -p build -j $(nproc) \
+        -checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*'
 }
 
 do_build_debug() {

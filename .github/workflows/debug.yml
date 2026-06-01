@@ -67,7 +67,7 @@ jobs:
 
       - name: Run clang-tidy
         run: |
-          find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build
+          run-clang-tidy -p build -j $(nproc)
 
   debug-build-linux:
     name: Debug Build Artifacts (Linux)

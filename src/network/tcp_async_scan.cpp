@@ -19,6 +19,7 @@
 #include <optional>
 #include <queue>
 #include <random>
+#include <stop_token>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
@@ -126,13 +127,14 @@ public:
     explicit ThreadPool(size_t worker_count) {
         workers_.reserve(worker_count);
         for (size_t i = 0; i < worker_count; ++i) {
-            workers_.emplace_back([this] {
+            workers_.emplace_back([this](const std::stop_token& stoken) {
                 while (true) {
                     std::function<void()> task;
                     {
                         std::unique_lock<std::mutex> lock(mu_);
-                        cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
-                        if (stop_ && tasks_.empty()) return;
+                        if (!cv_.wait(lock, stoken, [this] { return !tasks_.empty(); })) {
+                            return;
+                        }
                         task = std::move(tasks_.front());
                         tasks_.pop();
                     }
@@ -140,14 +142,6 @@ public:
                 }
             });
         }
-    }
-
-    ~ThreadPool() {
-        {
-            std::scoped_lock lock(mu_);
-            stop_ = true;
-        }
-        cv_.notify_all();
     }
 
     template <typename Fn>
@@ -167,11 +161,10 @@ public:
     }
 
 private:
-    std::vector<std::jthread> workers_;
     std::queue<std::function<void()>> tasks_;
     std::mutex mu_;
-    std::condition_variable cv_;
-    bool stop_ = false;
+    std::condition_variable_any cv_;
+    std::vector<std::jthread> workers_;
 };
 
 #ifndef _WIN32
@@ -642,34 +635,53 @@ void syn_abort_signal_handler(int) {
 
 std::mutex g_syn_scan_mutex;
 
+struct SigactionTuple {
+    struct sigaction old_int{};
+    struct sigaction old_term{};
+    bool installed{false};
+    
+    SigactionTuple() = default;
+    SigactionTuple(std::nullptr_t) noexcept {}
+    
+    explicit operator bool() const noexcept { return installed; }
+    bool operator==(std::nullptr_t) const noexcept { return !installed; }
+    bool operator!=(std::nullptr_t) const noexcept { return installed; }
+    bool operator==(const SigactionTuple& o) const noexcept { return installed == o.installed; }
+    bool operator!=(const SigactionTuple& o) const noexcept { return installed != o.installed; }
+};
+
+struct SigactionDeleter {
+    using pointer = SigactionTuple;
+    void operator()(SigactionTuple h) const noexcept {
+        if (h.installed) {
+            sigaction(SIGINT, &h.old_int, nullptr);
+            sigaction(SIGTERM, &h.old_term, nullptr);
+        }
+    }
+};
+
 class SynAbortSignalGuard {
 public:
     explicit SynAbortSignalGuard() : lock_(g_syn_scan_mutex) {
         g_syn_abort = 0;
 
-        std::memset(&new_action_, 0, sizeof(new_action_));
-        new_action_.sa_handler = syn_abort_signal_handler;
-        sigemptyset(&new_action_.sa_mask);
+        struct sigaction new_action{};
+        std::memset(&new_action, 0, sizeof(new_action));
+        new_action.sa_handler = syn_abort_signal_handler;
+        sigemptyset(&new_action.sa_mask);
+        new_action.sa_flags = 0;
 
-        if (sigaction(SIGINT, &new_action_, &old_int_) == 0 &&
-            sigaction(SIGTERM, &new_action_, &old_term_) == 0) {
-            installed_ = true;
-        }
-    }
-
-    ~SynAbortSignalGuard() {
-        if (installed_) {
-            sigaction(SIGINT, &old_int_, nullptr);
-            sigaction(SIGTERM, &old_term_, nullptr);
+        SigactionTuple tuple;
+        if (sigaction(SIGINT, &new_action, &tuple.old_int) == 0 &&
+            sigaction(SIGTERM, &new_action, &tuple.old_term) == 0) {
+            tuple.installed = true;
+            guard_.reset(tuple);
         }
     }
 
 private:
     std::unique_lock<std::mutex> lock_;
-    bool installed_ = false;
-    struct sigaction new_action_ {};
-    struct sigaction old_int_ {};
-    struct sigaction old_term_ {};
+    std::unique_ptr<SigactionTuple, SigactionDeleter> guard_;
 };
 
 bool resolve_ipv4_target(const std::string& host, sockaddr_in& out) {
