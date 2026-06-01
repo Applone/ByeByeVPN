@@ -1,4 +1,6 @@
 #!/bin/bash
+# WARNING: This build script is deprecated and will be deleted soon.
+# Please use local_build.py instead of this script.
 set -euo pipefail
 
 # ANSI color codes
@@ -8,7 +10,10 @@ GREEN="\033[32m"
 RED="\033[31m"
 CYAN="\033[36m"
 YELLOW="\033[33m"
+DIM="\033[2m"
+ITALIC="\033[3m"
 
+# CLI parsing
 KEEP_ARTIFACTS=0
 BUILD_LINUX=1
 BUILD_WINDOWS=1
@@ -16,173 +21,392 @@ EXPLICIT_BUILD_TARGET=0
 
 while [ $# -gt 0 ]; do
     case $1 in
-        --keep)
-        KEEP_ARTIFACTS=1
-        shift
-        ;;
+        --keep) KEEP_ARTIFACTS=1; shift ;;
         --linux)
-        if [ "$EXPLICIT_BUILD_TARGET" -eq 0 ]; then
-            BUILD_WINDOWS=0
-            EXPLICIT_BUILD_TARGET=1
-        fi
-        BUILD_LINUX=1
-        shift
-        ;;
+            if [ "$EXPLICIT_BUILD_TARGET" -eq 0 ]; then BUILD_WINDOWS=0; EXPLICIT_BUILD_TARGET=1; fi
+            BUILD_LINUX=1; shift ;;
         --windows)
-        if [ "$EXPLICIT_BUILD_TARGET" -eq 0 ]; then
-            BUILD_LINUX=0
-            EXPLICIT_BUILD_TARGET=1
-        fi
-        BUILD_WINDOWS=1
-        shift
-        ;;
+            if [ "$EXPLICIT_BUILD_TARGET" -eq 0 ]; then BUILD_LINUX=0; EXPLICIT_BUILD_TARGET=1; fi
+            BUILD_WINDOWS=1; shift ;;
         *)
-        echo -e "${RED}Unknown option: $1${RESET}" >&2
-        echo -e "Usage: $0 [--keep] [--linux] [--windows]" >&2
-        exit 2
-        ;;
+            echo -e "${RED}Unknown option: $1${RESET}" >&2
+            exit 2 ;;
     esac
 done
 
+STATE_FILE="/tmp/bbvpn_state_$$.sh"
+RUNNING_PID=""
+
 cleanup() {
+    if [ -n "${UI_LINES:-}" ]; then
+        tput rc 2>/dev/null || true
+        printf "\033[%dB\n" "$UI_LINES" 2>/dev/null || true
+    fi
+    
+    if [ -n "$RUNNING_PID" ] && kill -0 "$RUNNING_PID" 2>/dev/null; then
+        kill -9 "$RUNNING_PID" 2>/dev/null || true
+    fi
+    
     if [ "$KEEP_ARTIFACTS" -eq 1 ]; then
         echo -e "${YELLOW}Skipping cleanup (--keep flag provided).${RESET}"
-        return 0
+    else
+        echo -e "${CYAN}Cleaning up build artifacts...${RESET}"
+        rm -rf build staging build-cov coverage.info coverage-html \
+               deps build-asan-ubsan build-tsan build-msan build-win
     fi
-
-    echo -e "${CYAN}Cleaning up build artifacts...${RESET}"
-    rm -rf build staging build-cov coverage.info coverage-html \
-           deps build-asan-ubsan build-tsan build-msan build-win
+    rm -f "$STATE_FILE"
 }
 
+trap 'echo -e "\n${RED}Interrupted${RESET}"; exit 130' INT
 trap cleanup EXIT
 
-# --- Container engine discovery ---
-CONTAINER_ENGINE=""
-if command -v podman &>/dev/null; then
-    CONTAINER_ENGINE="podman"
-elif command -v docker &>/dev/null; then
-    CONTAINER_ENGINE="docker"
-else
-    echo -e "${RED}ERROR: Neither podman nor docker is installed. Please install one of them.${RESET}" >&2
-    exit 1
-fi
-echo -e "${GREEN}Using container engine: $CONTAINER_ENGINE${RESET}"
-
-# --- TUN interface check ---
-CONTAINER_NETWORK_ARGS=()
-if [ ! -e /dev/net/tun ]; then
-    echo -e "${YELLOW}TUN interface not available, using --network=host for containers.${RESET}"
-    CONTAINER_NETWORK_ARGS+=(--network=host)
-fi
-
-# --- vcpkg setup ---
-if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
-    echo -e "${GREEN}Using existing vcpkg at: $VCPKG_ROOT${RESET}"
-elif command -v vcpkg &>/dev/null; then
-    VCPKG_ROOT="$(dirname "$(command -v vcpkg)")"
-    if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-        if [ -f "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
-            VCPKG_ROOT="/usr/share/vcpkg"
-        else
-            echo -e "${RED}ERROR: vcpkg binary found but cannot locate vcpkg root directory.${RESET}" >&2
-            echo -e "${RED}Please set the VCPKG_ROOT environment variable.${RESET}" >&2
-            exit 1
-        fi
-    fi
-    echo -e "${GREEN}Found vcpkg in PATH, using: $VCPKG_ROOT${RESET}"
-else
-    VCPKG_ROOT="$(pwd)/deps/vcpkg"
-    if [ ! -f "$VCPKG_ROOT/vcpkg" ]; then
-        echo -e "${YELLOW}vcpkg not found. It will be cloned and bootstrapped into $VCPKG_ROOT.${RESET}"
-        read -rp "Proceed with vcpkg installation? [y/N] " answer </dev/tty
-        if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-            echo -e "${RED}Aborted. Please install vcpkg manually or set VCPKG_ROOT.${RESET}" >&2
-            exit 1
-        fi
-        mkdir -p deps
-        git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
-        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-    else
-        echo -e "${GREEN}Using previously cloned vcpkg at: $VCPKG_ROOT${RESET}"
-    fi
-fi
-export VCPKG_ROOT
-export VCPKG_FORCE_SYSTEM_BINARIES=1
-
-VCPKG_TOOLCHAIN="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-VCPKG_TRIPLET="x64-linux-static"
-OVERLAY_TRIPLETS="$(pwd)/triplets"
-
-# --- Check build prerequisites ---
-MISSING_DEPS=()
-
-if ! command -v perl &>/dev/null; then
-    MISSING_DEPS+=("perl")
-else
-    if ! perl -e 'use IPC::Cmd;' &>/dev/null; then
-        MISSING_DEPS+=("perl-IPC-Cmd (Fedora/RHEL) or libperl-dev (Debian/Ubuntu)")
-    fi
-    if ! perl -e 'use FindBin;' &>/dev/null; then
-        MISSING_DEPS+=("perl-FindBin (Fedora/RHEL)")
-    fi
-    if ! perl -e 'use File::Compare;' &>/dev/null; then
-        MISSING_DEPS+=("perl-File-Compare (Fedora/RHEL)")
-    fi
-fi
-
-if [ ! -d /usr/include/linux ]; then
-    MISSING_DEPS+=("kernel-headers (Fedora/RHEL) or linux-libc-dev (Debian/Ubuntu)")
-fi
-
-if ! command -v make &>/dev/null; then
-    MISSING_DEPS+=("make")
-fi
-
-if ! command -v cmake &>/dev/null; then
-    MISSING_DEPS+=("cmake")
-fi
-
-if ! command -v ninja &>/dev/null; then
-    MISSING_DEPS+=("ninja-build")
-fi
-
-if ! command -v clang &>/dev/null; then
-    MISSING_DEPS+=("clang")
-fi
-
-if [ "$BUILD_WINDOWS" -eq 1 ]; then
-    if ! command -v x86_64-w64-mingw32-g++ &>/dev/null; then
-        MISSING_DEPS+=("x86_64-w64-mingw32-g++ (mingw-w64-gcc-c++)")
-    fi
-fi
-
-if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-    echo -e "${RED}ERROR: The following system dependencies are missing:${RESET}" >&2
-    for dep in "${MISSING_DEPS[@]}"; do
-        echo -e "  - ${YELLOW}$dep${RESET}" >&2
-    done
-    echo "" >&2
-    echo -e "${RED}Please install them via your system package manager before running this script.${RESET}" >&2
-    exit 1
-fi
-
-# Config
+# Initialize state file
+> "$STATE_FILE"
 OPENSSL_VERSION="3.5.6"
 CONTAINER_IMAGE="localhost/helpers/sans:latest"
 STATIC_FLAG="-DBYEBYEVPN_STATIC=OFF"
 
-export CC=clang
-export CXX=clang++
-TEST_PARALLEL_JOBS=$(nproc)
-[ "$TEST_PARALLEL_JOBS" -lt 1 ] && TEST_PARALLEL_JOBS=1
+{
+    echo "export OPENSSL_VERSION=\"$OPENSSL_VERSION\""
+    echo "export CONTAINER_IMAGE=\"$CONTAINER_IMAGE\""
+    echo "export STATIC_FLAG=\"$STATIC_FLAG\""
+    echo "export CC=clang"
+    echo "export CXX=clang++"
+    TEST_PARALLEL_JOBS=$(nproc)
+    [ "$TEST_PARALLEL_JOBS" -lt 1 ] && TEST_PARALLEL_JOBS=1
+    echo "export TEST_PARALLEL_JOBS=$TEST_PARALLEL_JOBS"
+} >> "$STATE_FILE"
+
+# Stages definition
+STAGES=()
+STAGE_KEYS=()
+STAGE_CMDS=()
+STAGE_STATUS=()
+STAGE_TIME=()
+
+add_stage() {
+    STAGES+=("$1")
+    STAGE_KEYS+=("$2")
+    STAGE_CMDS+=("$3")
+    STAGE_STATUS+=("WAIT")
+    STAGE_TIME+=("")
+}
+
+add_stage "Dependency checks" "deps" "do_deps_check"
+add_stage "vcpkg setup" "vcpkg" "do_vcpkg_setup"
 
 if [ "$BUILD_LINUX" -eq 1 ]; then
-    echo -e "\n${BOLD}${CYAN}==============================================${RESET}"
-    echo -e "${BOLD}${CYAN}   Starting Linux Build & Test Phase          ${RESET}"
-    echo -e "${BOLD}${CYAN}==============================================${RESET}\n"
+    add_stage "Static analysis (cppcheck)" "cppcheck" "do_cppcheck"
+    add_stage "Static analysis (clang-tidy)" "clangtidy" "do_clangtidy"
+    add_stage "Debug build" "build_debug" "do_build_debug"
+    add_stage "Coverage build & tests" "cov" "do_cov"
+    add_stage "Sanitizer: asan-ubsan" "asan" "do_asan"
+    add_stage "Sanitizer: tsan" "tsan" "do_tsan"
+    add_stage "Sanitizer: msan" "msan" "do_msan"
+else
+    add_stage "Linux phases" "linux" "true"
+    STAGE_STATUS[${#STAGE_STATUS[@]}-1]="SKIP"
+fi
 
-    echo -e "${CYAN}Running static analysis...${RESET}"
+if [ "$BUILD_WINDOWS" -eq 1 ]; then
+    add_stage "Windows cross-compile" "win_build" "do_win_build"
+    add_stage "Windows tests" "win_test" "do_win_test"
+else
+    add_stage "Windows phases" "win" "true"
+    STAGE_STATUS[${#STAGE_STATUS[@]}-1]="SKIP"
+fi
+
+NUM_STAGES=${#STAGES[@]}
+UI_LINES=$(( NUM_STAGES + 3 ))
+CURRENT_ACTION=""
+SPINNER_FRAME=""
+
+setup_ui() {
+    for (( i=0; i<$UI_LINES; i++ )); do echo ""; done
+    printf "\033[%dA" "$UI_LINES"
+    tput sc
+}
+
+pause_ui() {
+    tput rc
+    printf "\033[%dB\n" "$UI_LINES"
+}
+
+clear_ui() {
+    tput rc
+    printf "\033[J"
+}
+
+draw_ui() {
+    tput rc
+    echo -e "${BOLD}${CYAN}Stages:${RESET}\033[K"
+    for i in "${!STAGES[@]}"; do
+        local status="${STAGE_STATUS[$i]}"
+        local name="${STAGES[$i]}"
+        local time_str="${STAGE_TIME[$i]}"
+        
+        local icon=""
+        local color=""
+        local tcolor="${DIM}${CYAN}"
+        local frame_text=""
+        
+        case "$status" in
+            WAIT) icon="WAIT"; color="${DIM}"; tcolor="" ;;
+            RUN)  icon="RUN "; color="${BOLD}${CYAN}" ;;
+            OK)   icon="OK  "; color="${BOLD}${GREEN}" ;;
+            FAIL) icon="FAIL"; color="${BOLD}${RED}" ;;
+            SKIP) icon="SKIP"; color="${DIM}${YELLOW}" ;;
+        esac
+
+        if [ "$status" == "RUN" ] && [ -n "$SPINNER_FRAME" ]; then
+            frame_text="${BOLD}${CYAN}${SPINNER_FRAME}${RESET} "
+        else
+            frame_text="  "
+        fi
+        
+        local cols=$(tput cols 2>/dev/null || echo 80)
+        [ -z "$cols" ] && cols=80
+        
+        local max_name_len=$(( cols - 25 ))
+        [ $max_name_len -lt 10 ] && max_name_len=10
+        local disp_name="$name"
+        if [ ${#disp_name} -gt $max_name_len ]; then
+            disp_name="${disp_name:0:$max_name_len-1}…"
+        fi
+        
+        local v_len=$(( 13 + ${#disp_name} ))
+        local prefix="  [ ${color}${icon}${RESET} ] ${frame_text}${disp_name}"
+        
+        if [ -n "$time_str" ]; then
+            local target_col=60
+            [ $cols -lt $target_col ] && target_col=$cols
+            local pad=$(( target_col - v_len - ${#time_str} ))
+            [ $pad -lt 1 ] && pad=1
+            printf "%b%*s%b%s%b\033[K\n" "$prefix" "$pad" "" "$tcolor" "$time_str" "${RESET}"
+        else
+            printf "%b\033[K\n" "$prefix"
+        fi
+    done
+    
+    echo -e "\033[K"
+    if [ -n "$CURRENT_ACTION" ]; then
+        local cols=$(tput cols 2>/dev/null || echo 80)
+        [ -z "$cols" ] && cols=80
+        local max_len=$(( cols - 6 ))
+        [ $max_len -lt 10 ] && max_len=10
+        local act="${CURRENT_ACTION}"
+        if [ ${#act} -gt $max_len ]; then
+            act="${act:0:$max_len-1}…"
+        fi
+        echo -e "${DIM}${ITALIC}  → ${act}${RESET}\033[K"
+    else
+        echo -e "\033[K"
+    fi
+}
+
+TOTAL_TIME_START=$(date +%s.%N)
+TOTAL_PASS=0
+TOTAL_FAIL=0
+TOTAL_SKIP=0
+
+fail_summary() {
+    local name="$1"
+    local log="$2"
+    
+    pause_ui
+    local total_end=$(date +%s.%N)
+    local total_elapsed=$(awk -v t1="$TOTAL_TIME_START" -v t2="$total_end" 'BEGIN{printf "%.1fs", t2-t1}')
+    
+    echo -e "\n${BOLD}${CYAN}==================================================${RESET}"
+    echo -e "${BOLD}Build Summary${RESET}"
+    echo -e "${BOLD}${CYAN}==================================================${RESET}"
+    echo -e "Total Time:  ${BOLD}${total_elapsed}${RESET}"
+    echo -e "Passed:      ${BOLD}${GREEN}${TOTAL_PASS}${RESET}"
+    echo -e "Skipped:     ${BOLD}${YELLOW}${TOTAL_SKIP}${RESET}"
+    echo -e "Failed:      ${BOLD}${RED}${TOTAL_FAIL}${RESET}"
+    echo -e "${BOLD}${CYAN}==================================================${RESET}\n"
+
+    echo -e "${BOLD}${RED}==================================================${RESET}"
+    echo -e "${BOLD}${RED}  FAILURE IN STAGE: ${name}${RESET}"
+    echo -e "${BOLD}${RED}==================================================${RESET}\n"
+    
+    if [ -f "$log" ]; then
+        cat "$log"
+    else
+        echo -e "${DIM}(No log file found)${RESET}"
+    fi
+    echo -e "\n${BOLD}${RED}==================================================${RESET}"
+    echo -e "${BOLD}${RED}Build aborted.${RESET}\n"
+}
+
+final_summary() {
+    pause_ui
+    local total_end=$(date +%s.%N)
+    local total_elapsed=$(awk -v t1="$TOTAL_TIME_START" -v t2="$total_end" 'BEGIN{printf "%.1fs", t2-t1}')
+    
+    echo -e "\n${BOLD}${CYAN}==================================================${RESET}"
+    echo -e "${BOLD}Build Summary${RESET}"
+    echo -e "${BOLD}${CYAN}==================================================${RESET}"
+    echo -e "Total Time:  ${BOLD}${total_elapsed}${RESET}"
+    echo -e "Passed:      ${BOLD}${GREEN}${TOTAL_PASS}${RESET}"
+    echo -e "Skipped:     ${BOLD}${YELLOW}${TOTAL_SKIP}${RESET}"
+    echo -e "Failed:      ${BOLD}${RED}${TOTAL_FAIL}${RESET}"
+    echo -e "${BOLD}${CYAN}==================================================${RESET}\n"
+    
+    if [ $TOTAL_FAIL -eq 0 ]; then
+        echo -e "${BOLD}${GREEN}Build completed successfully!${RESET}\n"
+    fi
+}
+
+run_stage() {
+    local index=$1
+    if [ "${STAGE_STATUS[$index]}" == "SKIP" ]; then
+        TOTAL_SKIP=$((TOTAL_SKIP + 1))
+        return
+    fi
+    
+    local name="${STAGES[$index]}"
+    local key="${STAGE_KEYS[$index]}"
+    local cmd="${STAGE_CMDS[$index]}"
+    
+    STAGE_STATUS[$index]="RUN"
+    draw_ui
+    
+    local log="/tmp/bbvpn_stage_${key}.log"
+    > "$log"
+
+    local start_time=$(date +%s.%N)
+    
+    eval "source '$STATE_FILE' && $cmd" > "$log" 2>&1 &
+    local pid=$!
+    RUNNING_PID=$pid
+    
+    local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    local f=0
+    
+    while kill -0 $pid 2>/dev/null; do
+        local tail_line=$(tail -n 1 "$log" 2>/dev/null | tr -d '\r\n' | tr -cd '\040-\176' || true)
+        if [ -n "$tail_line" ]; then
+            CURRENT_ACTION="$tail_line"
+        fi
+        
+        SPINNER_FRAME="${frames[$f]}"
+        f=$(( (f + 1) % 10 ))
+        
+        draw_ui
+        sleep 0.1
+    done
+    
+    local exit_code=0
+    wait $pid || exit_code=$?
+    RUNNING_PID=""
+    
+    local end_time=$(date +%s.%N)
+    local elapsed=$(awk -v t1="$start_time" -v t2="$end_time" 'BEGIN{printf "%.1fs", t2-t1}')
+    STAGE_TIME[$index]="$elapsed"
+    
+    SPINNER_FRAME=""
+    CURRENT_ACTION=""
+    
+    if [ $exit_code -eq 0 ]; then
+        STAGE_STATUS[$index]="OK"
+        TOTAL_PASS=$((TOTAL_PASS + 1))
+        rm -f "$log"
+    else
+        STAGE_STATUS[$index]="FAIL"
+        TOTAL_FAIL=$((TOTAL_FAIL + 1))
+        draw_ui
+        fail_summary "$name" "$log"
+        exit 1
+    fi
+    draw_ui
+}
+
+# --- Command functions ---
+
+do_deps_check() {
+    local ce=""
+    if command -v podman &>/dev/null; then
+        ce="podman"
+    elif command -v docker &>/dev/null; then
+        ce="docker"
+    else
+        echo "ERROR: Neither podman nor docker is installed." >&2
+        return 1
+    fi
+    echo "export CONTAINER_ENGINE=\"$ce\"" >> "$STATE_FILE"
+
+    if [ ! -e /dev/net/tun ]; then
+        echo "export CONTAINER_NETWORK_ARGS=(--network=host)" >> "$STATE_FILE"
+    else
+        echo "export CONTAINER_NETWORK_ARGS=()" >> "$STATE_FILE"
+    fi
+
+    local MISSING_DEPS=()
+    if ! command -v perl &>/dev/null; then MISSING_DEPS+=("perl"); else
+        if ! perl -e 'use IPC::Cmd;' &>/dev/null; then MISSING_DEPS+=("perl-IPC-Cmd"); fi
+        if ! perl -e 'use FindBin;' &>/dev/null; then MISSING_DEPS+=("perl-FindBin"); fi
+        if ! perl -e 'use File::Compare;' &>/dev/null; then MISSING_DEPS+=("perl-File-Compare"); fi
+    fi
+    if [ ! -d /usr/include/linux ]; then MISSING_DEPS+=("kernel-headers"); fi
+    if ! command -v make &>/dev/null; then MISSING_DEPS+=("make"); fi
+    if ! command -v cmake &>/dev/null; then MISSING_DEPS+=("cmake"); fi
+    if ! command -v ninja &>/dev/null; then MISSING_DEPS+=("ninja-build"); fi
+    if ! command -v clang &>/dev/null; then MISSING_DEPS+=("clang"); fi
+    if [ "$BUILD_WINDOWS" -eq 1 ]; then
+        if ! command -v x86_64-w64-mingw32-g++ &>/dev/null; then MISSING_DEPS+=("x86_64-w64-mingw32-g++"); fi
+    fi
+
+    if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+        echo "ERROR: Missing dependencies: ${MISSING_DEPS[*]}" >&2
+        return 1
+    fi
+}
+
+check_vcpkg_prompt() {
+    if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
+        echo "export VCPKG_ROOT=\"$VCPKG_ROOT\"" >> "$STATE_FILE"
+        return 0
+    elif command -v vcpkg &>/dev/null; then
+        local vr="$(dirname "$(command -v vcpkg)")"
+        if [ ! -f "$vr/scripts/buildsystems/vcpkg.cmake" ]; then
+            if [ -f "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+                vr="/usr/share/vcpkg"
+            else
+                echo -e "${RED}ERROR: vcpkg binary found but cannot locate vcpkg root directory.${RESET}" >&2
+                exit 1
+            fi
+        fi
+        echo "export VCPKG_ROOT=\"$vr\"" >> "$STATE_FILE"
+        return 0
+    else
+        local vr="$(pwd)/deps/vcpkg"
+        if [ ! -f "$vr/vcpkg" ]; then
+            clear_ui
+            read -rp "Proceed with vcpkg installation? [y/N] " answer </dev/tty
+            setup_ui
+            if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+                echo -e "${RED}Aborted. Please install vcpkg manually.${RESET}" >&2
+                exit 1
+            fi
+        fi
+        echo "export VCPKG_ROOT=\"$vr\"" >> "$STATE_FILE"
+    fi
+}
+
+do_vcpkg_setup() {
+    if [ ! -f "$VCPKG_ROOT/vcpkg" ] && [[ "$VCPKG_ROOT" == *"deps/vcpkg"* ]]; then
+        mkdir -p deps
+        git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+    fi
+    echo "export VCPKG_FORCE_SYSTEM_BINARIES=1" >> "$STATE_FILE"
+    echo "export VCPKG_TOOLCHAIN=\"$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake\"" >> "$STATE_FILE"
+    echo "export VCPKG_TRIPLET=\"x64-linux-static\"" >> "$STATE_FILE"
+    echo "export OVERLAY_TRIPLETS=\"$(pwd)/triplets\"" >> "$STATE_FILE"
+}
+
+do_cppcheck() {
     cmake -S . -B build -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
         -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
@@ -191,20 +415,23 @@ if [ "$BUILD_LINUX" -eq 1 ]; then
         -DBYEBYEVPN_ENABLE_TESTS=OFF \
         -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON \
         "$STATIC_FLAG"
-
+        
     cppcheck --std=c++20 --enable=warning,style,performance,portability \
         --error-exitcode=1 --inline-suppr --quiet src
+}
 
-    # Run clang-tidy on cpp files (NUL-delimited to handle paths with whitespace)
+do_clangtidy() {
     find src -name '*.cpp' -print0 | xargs -0 -r clang-tidy -p build \
         --checks='clang-analyzer-*,clang-diagnostic-*' -warnings-as-errors='*'
+}
 
-    echo -e "${CYAN}Building debug artifacts...${RESET}"
+do_build_debug() {
     cmake --build build --parallel
     mkdir -p staging
     cp build/byebyevpn staging/
+}
 
-    echo -e "${CYAN}Running coverage...${RESET}"
+do_cov() {
     cmake -S . -B build-cov -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
         -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
@@ -234,13 +461,13 @@ if [ "$BUILD_LINUX" -eq 1 ]; then
         -instr-profile=build-cov/coverage.profdata \
         -ignore-filename-regex='.*/(_deps|tests|build-cov)/.*' \
         build-cov/tests/byebyevpn_tests
+}
 
-    echo -e "${CYAN}Running sanitizers via $CONTAINER_ENGINE...${RESET}"
-    for SAN in asan-ubsan tsan msan; do
-        echo -e "${CYAN}Running ${SAN}...${RESET}"
-        $CONTAINER_ENGINE run -i --rm "${CONTAINER_NETWORK_ARGS[@]}" --privileged \
-            -v "$(pwd):/workspace" -w /workspace "$CONTAINER_IMAGE" \
-            bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
+run_sanitizer() {
+    local SAN=$1
+    $CONTAINER_ENGINE run -i --rm "${CONTAINER_NETWORK_ARGS[@]}" --privileged \
+        -v "$(pwd):/workspace" -w /workspace "$CONTAINER_IMAGE" \
+        bash -s "$SAN" "$OPENSSL_VERSION" "$STATIC_FLAG" << 'EOF'
 set -euo pipefail
 
 SAN=$1
@@ -250,7 +477,6 @@ STATIC_FLAG=$3
 export CC=clang
 export CXX=clang++
 
-# Install OpenSSL build deps
 apt-get update -y && apt-get install -y perl make curl
 
 OPENSSL_PREFIX="/workspace/deps/openssl-${SAN}-${OPENSSL_VERSION}"
@@ -272,7 +498,6 @@ case "$SAN" in
         ;;
 esac
 
-# Cache OpenSSL locally
 if [ ! -d "$OPENSSL_PREFIX" ]; then
     mkdir -p "/workspace/deps"
     if [ ! -f "/workspace/deps/openssl-${OPENSSL_VERSION}.tar.gz" ]; then
@@ -293,7 +518,6 @@ if [ ! -d "$OPENSSL_PREFIX" ]; then
     cd /workspace
 fi
 
-# Build and test project with sanitizers
 cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE=Debug \
     -DBYEBYEVPN_ENABLE_TESTS=ON \
@@ -304,7 +528,6 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_CXX_FLAGS="${SAN_FLAGS} -stdlib=libc++ -isystem ${LIBCXX_ROOT}/include/c++/v1" \
     -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS} -stdlib=libc++ -L${LIBCXX_ROOT}/lib -Wl,-rpath,${LIBCXX_ROOT}/lib"
 
-# MSan/ASan/TSan inflate memory 3-5x per TU; cap parallelism to avoid OOM crashes
 PARALLEL_JOBS=$(( $(nproc) / 2 ))
 [ "$PARALLEL_JOBS" -lt 1 ] && PARALLEL_JOBS=1
 cmake --build "$BUILD_DIR" --parallel "$PARALLEL_JOBS"
@@ -312,17 +535,13 @@ cmake --build "$BUILD_DIR" --parallel "$PARALLEL_JOBS"
 export LD_LIBRARY_PATH="${LIBCXX_ROOT}/lib:${LD_LIBRARY_PATH:-}"
 ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel "$PARALLEL_JOBS"
 EOF
+}
 
-    done
-    echo -e "${GREEN}Linux phase finished successfully.${RESET}"
-fi
+do_asan() { run_sanitizer "asan-ubsan"; }
+do_tsan() { run_sanitizer "tsan"; }
+do_msan() { run_sanitizer "msan"; }
 
-if [ "$BUILD_WINDOWS" -eq 1 ]; then
-    echo -e "\n${BOLD}${CYAN}==============================================${RESET}"
-    echo -e "${BOLD}${CYAN}   Starting Windows Build & Test Phase        ${RESET}"
-    echo -e "${BOLD}${CYAN}==============================================${RESET}\n"
-
-    echo -e "${CYAN}Building Windows artifacts...${RESET}"
+do_win_build() {
     cmake -S . -B build-win -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" \
         -DVCPKG_TARGET_TRIPLET="x64-mingw-static" \
@@ -342,45 +561,57 @@ if [ "$BUILD_WINDOWS" -eq 1 ]; then
     if [ -f build-win/byebyevpn.exe ]; then
         cp build-win/byebyevpn.exe staging/windows-Release/
     fi
+}
 
-    echo -e "${CYAN}Running Windows tests...${RESET}"
+do_win_test() {
+    if [ "$TEST_CMD" == "skip" ]; then
+        return 0
+    fi
+    if [ -n "$TEST_CMD" ] && [ "$TEST_CMD" != "native" ]; then
+        $TEST_CMD build-win/tests/byebyevpn_tests.exe
+    else
+        build-win/tests/byebyevpn_tests.exe
+    fi
+}
 
-    TEST_CMD=""
-    RUN_TESTS=1
+# --- Main Execution ---
 
-    # Check for WSL
+echo -e "${BOLD}${CYAN}ByeByeVPN Local Build${RESET}"
+echo -e "=================================================="
+
+setup_ui
+draw_ui
+
+check_vcpkg_prompt
+
+TEST_CMD="native"
+if [ "$BUILD_WINDOWS" -eq 1 ]; then
     if grep -qi "microsoft" /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
-        echo -e "${YELLOW}WSL environment detected.${RESET}"
+        clear_ui
         read -rp "Is it okay to proceed and run unit tests directly? (y/n) " answer </dev/tty
+        setup_ui
         if [[ "$answer" =~ ^[Yy]$ ]]; then
             TEST_CMD=""
         else
-            echo -e "${YELLOW}Skipping native execution. Checking for wine...${RESET}"
-            if command -v wine &>/dev/null; then
-                TEST_CMD="wine"
-            else
-                echo -e "${YELLOW}Wine not found. Skipping Windows tests.${RESET}"
-                RUN_TESTS=0
-            fi
+            if command -v wine &>/dev/null; then TEST_CMD="wine"; else TEST_CMD="skip"; fi
         fi
     else
-        if command -v wine &>/dev/null; then
-            TEST_CMD="wine"
-        else
-            echo -e "${YELLOW}Wine not found. Skipping Windows tests.${RESET}"
-            RUN_TESTS=0
-        fi
+        if command -v wine &>/dev/null; then TEST_CMD="wine"; else TEST_CMD="skip"; fi
     fi
-
-    if [ "$RUN_TESTS" -eq 1 ]; then
-        echo -e "${CYAN}Executing Windows tests with: ${TEST_CMD:-native}${RESET}"
-        if [ -n "$TEST_CMD" ]; then
-            $TEST_CMD build-win/tests/byebyevpn_tests.exe
-        else
-            build-win/tests/byebyevpn_tests.exe
-        fi
-        echo -e "${GREEN}Windows tests passed successfully.${RESET}"
+    
+    if [ "$TEST_CMD" == "skip" ]; then
+        for i in "${!STAGE_KEYS[@]}"; do
+            if [ "${STAGE_KEYS[$i]}" == "win_test" ]; then
+                STAGE_STATUS[$i]="SKIP"
+            fi
+        done
     fi
 fi
+echo "export TEST_CMD=\"$TEST_CMD\"" >> "$STATE_FILE"
+draw_ui
 
-echo -e "\n${BOLD}${GREEN}Local CI run finished successfully.${RESET}"
+for i in "${!STAGES[@]}"; do
+    run_stage $i
+done
+
+final_summary
