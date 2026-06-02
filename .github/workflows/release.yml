@@ -143,3 +143,4 @@ jobs:
           files: |
             out/linux/byebyevpn-${{ github.ref_name }}-linux-amd64
             out/windows/byebyevpn-${{ github.ref_name }}-windows-x64.exe
+          generate_release_notes: true

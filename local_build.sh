@@ -1,6 +1,6 @@
 #!/bin/bash
-# WARNING: This build script is deprecated and will be deleted soon.
-# Please use local_build.py instead of this script.
+# WARNING: This build script is OUTDATED and DEPRECATED, and will be deleted soon.
+# Please use the Python version instead: python3 local_build.py
 set -euo pipefail
 
 # ANSI color codes
@@ -589,6 +589,11 @@ do_win_test() {
 
 echo -e "${BOLD}${CYAN}ByeByeVPN Local Build${RESET}"
 echo -e "=================================================="
+
+echo -e "${BOLD}${YELLOW}WARNING: local_build.sh is deprecated and outdated.${RESET}" >&2
+echo -e "${YELLOW}Please use the Python version instead: ${BOLD}python3 local_build.py${RESET}" >&2
+echo -e "${DIM}This script will be removed in a future release.${RESET}" >&2
+echo >&2
 
 setup_ui
 draw_ui
