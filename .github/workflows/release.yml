@@ -97,7 +97,7 @@ jobs:
         env:
           CC: clang
           CXX: clang++
-        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_BUILD_TYPE=Release -DVCPKG_BUILD_TYPE=Release -DBYEBYEVPN_ENABLE_TESTS=ON -DBYEBYEVPN_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --parallel
