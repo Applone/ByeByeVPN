@@ -108,6 +108,8 @@ inline void set_nonblocking(SOCKET s, bool nb) noexcept {
 struct SocketHandle {
     SOCKET s{INVALID_SOCKET};
     SocketHandle() = default;
+	// This is false positive due to an old version of cppcheck.
+	// cppcheck-suppress noExplicitConstructor
     SocketHandle(std::nullptr_t) noexcept {}
     explicit SocketHandle(SOCKET sock) noexcept : s{sock} {}
     explicit operator bool() const noexcept { return s != INVALID_SOCKET; }

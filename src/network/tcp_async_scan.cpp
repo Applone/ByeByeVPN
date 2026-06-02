@@ -641,6 +641,8 @@ struct SigactionTuple {
     bool installed{false};
     
     SigactionTuple() = default;
+	// This is false positive due to an old version of cppcheck. 
+	// cppcheck-suppress noExplicitConstructor
     SigactionTuple(std::nullptr_t) noexcept {}
     
     explicit operator bool() const noexcept { return installed; }
