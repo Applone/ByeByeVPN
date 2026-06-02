@@ -20,8 +20,8 @@ namespace {
 [[nodiscard]] constexpr bool iequals_ascii(std::string_view a, std::string_view b) noexcept {
     if (a.size() != b.size()) return false;
     for (std::size_t i{0}; i < a.size(); ++i) {
-        const auto ca{static_cast<unsigned char>(a[i])};
-        const auto cb{static_cast<unsigned char>(b[i])};
+        const auto ca{static_cast<unsigned char>(a.at(i))};
+        const auto cb{static_cast<unsigned char>(b.at(i))};
         const bool a_alpha{ca >= 'A' && ca <= 'Z'};
         const bool b_alpha{cb >= 'A' && cb <= 'Z'};
         const unsigned char fa{a_alpha ? static_cast<unsigned char>(ca | 0x20) : ca};

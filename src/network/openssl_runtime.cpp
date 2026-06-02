@@ -82,7 +82,7 @@ void do_init() {
 } // namespace
 
 [[nodiscard]] bool openssl_runtime_init(std::string* err) {
-    std::lock_guard<std::mutex> lock(g_ossl_mutex);
+    std::scoped_lock lock(g_ossl_mutex);
 
     if (!g_ossl_initialized) {
         do_init();
@@ -96,7 +96,7 @@ void do_init() {
 }
 
 void openssl_runtime_cleanup() {
-    std::lock_guard<std::mutex> lock(g_ossl_mutex);
+    std::scoped_lock lock(g_ossl_mutex);
     if (!g_ossl_initialized) return;
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L

@@ -4,6 +4,7 @@
 #include "network_test_helpers.h"
 
 #include <chrono>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -61,14 +62,17 @@ TEST_CASE("tcp_connect reports timeout for unroutable destination") {
 TEST_CASE("tcp_send_all writes full payload") {
     std::string received;
     const std::string payload = "hello-over-tcp";
+    std::promise<void> done;
+    auto future = done.get_future();
 
     {
-        testnet::TcpOneShotServer server([&received](SOCKET client) {
+        testnet::TcpOneShotServer server([&received, &done](SOCKET client) {
             char buf[256] = {0};
             const int n = recv(client, buf, sizeof(buf), 0);
             if (n > 0) {
                 received.assign(buf, buf + n);
             }
+            done.set_value();
         });
 
         std::string err;
@@ -78,15 +82,22 @@ TEST_CASE("tcp_send_all writes full payload") {
         const int sent = tcp_send_all(s, payload.data(), static_cast<int>(payload.size()));
         REQUIRE(sent == static_cast<int>(payload.size()));
         closesocket(s);
+        
+        // Wait for the server thread to process the payload
+        future.wait_for(std::chrono::seconds(2));
     }
 
     REQUIRE(received == payload);
 }
 
 TEST_CASE("tcp_send_all returns immediately for zero-length payload") {
-    testnet::TcpOneShotServer server([](SOCKET client) {
+    std::promise<void> done;
+    auto future = done.get_future();
+
+    testnet::TcpOneShotServer server([&done](SOCKET client) {
         char buf[4] = {0};
         recv(client, buf, sizeof(buf), 0);
+        done.set_value();
     });
 
     std::string err;
@@ -97,6 +108,7 @@ TEST_CASE("tcp_send_all returns immediately for zero-length payload") {
     REQUIRE(sent == 0);
 
     closesocket(s);
+    future.wait_for(std::chrono::seconds(2));
 }
 
 TEST_CASE("tcp_send_all reports error on closed socket") {
@@ -145,8 +157,12 @@ TEST_CASE("tcp_recv_to handles short timeout without crashing") {
 }
 
 TEST_CASE("tcp_connect via localhost (IPv4 alias) succeeds") {
-    testnet::TcpOneShotServer server([](SOCKET client) {
+    std::promise<void> done;
+    auto future = done.get_future();
+
+    testnet::TcpOneShotServer server([&done](SOCKET client) {
         send(client, "x", 1, 0);
+        done.set_value();
     });
 
     std::string err;
@@ -154,4 +170,5 @@ TEST_CASE("tcp_connect via localhost (IPv4 alias) succeeds") {
     REQUIRE(s != INVALID_SOCKET);
     CHECK(err.empty());
     closesocket(s);
+    future.wait_for(std::chrono::seconds(2));
 }
