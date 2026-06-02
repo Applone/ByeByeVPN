@@ -35,7 +35,6 @@
 #include <cerrno>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
-#include <poll.h>
 #include <sys/epoll.h>
 #include <unistd.h>
 inline bool kbhit_stub() { return false; }
@@ -825,6 +824,20 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
 
     set_nonblocking(recv_fd, true);
 
+    const int epfd = epoll_create1(0);
+    if (epfd < 0) {
+        closesocket(recv_fd);
+        closesocket(send_fd);
+        fprintf(stderr, "  syn-scan epoll setup failed; falling back to connect scan\n");
+        return std::nullopt;
+    }
+    {
+        epoll_event ev{};
+        ev.events = EPOLLIN;
+        ev.data.fd = recv_fd;
+        epoll_ctl(epfd, EPOLL_CTL_ADD, recv_fd, &ev);
+    }
+
     WorkerResult out;
     std::unordered_map<uint16_t, SynPending> pending;
     pending.reserve(static_cast<size_t>(max_inflight) * 2 + 16);
@@ -873,13 +886,10 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
             pending.emplace(src_port, SynPending{.port=port, .src_port=src_port, .sent=Clock::now()});
         }
 
-        pollfd pfd{};
-        pfd.fd = recv_fd;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
-        poll(&pfd, 1, 6);
+        epoll_event ev{};
+        const int nready = epoll_wait(epfd, &ev, 1, 6);
 
-        if ((pfd.revents & POLLIN) != 0) {
+        if (nready > 0 && (ev.events & EPOLLIN) != 0) {
             for (;;) {
                 uint8_t buf[2048] = {0};
                 sockaddr_in from{};
@@ -945,6 +955,7 @@ std::optional<WorkerResult> scan_syn_half_open_linux(const std::string& host,
 
     closesocket(recv_fd);
     closesocket(send_fd);
+    close(epfd);
 
     return out;
 }
