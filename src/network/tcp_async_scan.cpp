@@ -674,10 +674,15 @@ public:
         new_action.sa_flags = 0;
 
         SigactionTuple tuple;
-        if (sigaction(SIGINT, &new_action, &tuple.old_int) == 0 &&
-            sigaction(SIGTERM, &new_action, &tuple.old_term) == 0) {
-            tuple.installed = true;
-            guard_.reset(tuple);
+        if (sigaction(SIGINT, &new_action, &tuple.old_int) == 0) {
+            if (sigaction(SIGTERM, &new_action, &tuple.old_term) == 0) {
+                tuple.installed = true;
+                guard_.reset(tuple);
+            } else {
+                // SIGTERM install failed: undo the SIGINT handler we just set
+                // so we don't leave a dangling handler behind.
+                sigaction(SIGINT, &tuple.old_int, nullptr);
+            }
         }
     }
 

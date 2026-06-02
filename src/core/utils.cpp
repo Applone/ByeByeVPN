@@ -281,7 +281,13 @@ struct Value {
                             break;
                         }
                     }
-                    append_utf8(static_cast<uint32_t>(u1));
+                    // Lone/unpaired surrogate is not a valid scalar value:
+                    // emit U+FFFD instead of producing invalid UTF-8.
+                    if (u1 >= 0xD800 && u1 <= 0xDFFF) {
+                        append_utf8(0xFFFD);
+                    } else {
+                        append_utf8(static_cast<uint32_t>(u1));
+                    }
                     break;
                 }
                 default:

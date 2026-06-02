@@ -39,6 +39,14 @@ chmod 600 "$STATE_FILE"
 RUNNING_PID=""
 STAGE_LOGS=""
 
+# Append a shell-safe `export NAME=VALUE` line to STATE_FILE.
+# The value is escaped with printf %q so embedded $(), backticks, quotes,
+# spaces or newlines cannot be executed when the state file is later sourced.
+write_state() {
+    local name="$1" value="$2"
+    printf 'export %s=%q\n' "$name" "$value" >> "$STATE_FILE"
+}
+
 cleanup() {
     if [ -n "${UI_LINES:-}" ]; then
         tput rc 2>/dev/null || true
@@ -68,16 +76,14 @@ OPENSSL_VERSION="3.5.6"
 CONTAINER_IMAGE="localhost/helpers/sans:latest"
 STATIC_FLAG="-DBYEBYEVPN_STATIC=OFF"
 
-{
-    echo "export OPENSSL_VERSION=\"$OPENSSL_VERSION\""
-    echo "export CONTAINER_IMAGE=\"$CONTAINER_IMAGE\""
-    echo "export STATIC_FLAG=\"$STATIC_FLAG\""
-    echo "export CC=clang"
-    echo "export CXX=clang++"
-    TEST_PARALLEL_JOBS=$(nproc)
-    [ "$TEST_PARALLEL_JOBS" -lt 1 ] && TEST_PARALLEL_JOBS=1
-    echo "export TEST_PARALLEL_JOBS=$TEST_PARALLEL_JOBS"
-} >> "$STATE_FILE"
+write_state OPENSSL_VERSION "$OPENSSL_VERSION"
+write_state CONTAINER_IMAGE "$CONTAINER_IMAGE"
+write_state STATIC_FLAG "$STATIC_FLAG"
+write_state CC clang
+write_state CXX clang++
+TEST_PARALLEL_JOBS=$(nproc)
+[ "$TEST_PARALLEL_JOBS" -lt 1 ] && TEST_PARALLEL_JOBS=1
+write_state TEST_PARALLEL_JOBS "$TEST_PARALLEL_JOBS"
 
 # Stages definition
 STAGES=()
@@ -338,8 +344,9 @@ do_deps_check() {
         echo "ERROR: Neither podman nor docker is installed." >&2
         return 1
     fi
-    echo "export CONTAINER_ENGINE=\"$ce\"" >> "$STATE_FILE"
+    write_state CONTAINER_ENGINE "$ce"
 
+    # Array literals with fixed, non-user-controlled contents — safe as-is.
     if [ ! -e /dev/net/tun ]; then
         echo "export CONTAINER_NETWORK_ARGS=(--network=host)" >> "$STATE_FILE"
     else
@@ -369,7 +376,7 @@ do_deps_check() {
 
 check_vcpkg_prompt() {
     if [ -n "${VCPKG_ROOT:-}" ] && [ -d "$VCPKG_ROOT" ]; then
-        echo "export VCPKG_ROOT=\"$VCPKG_ROOT\"" >> "$STATE_FILE"
+        write_state VCPKG_ROOT "$VCPKG_ROOT"
         return 0
     elif command -v vcpkg &>/dev/null; then
         local vr="$(dirname "$(command -v vcpkg)")"
@@ -381,7 +388,7 @@ check_vcpkg_prompt() {
                 exit 1
             fi
         fi
-        echo "export VCPKG_ROOT=\"$vr\"" >> "$STATE_FILE"
+        write_state VCPKG_ROOT "$vr"
         return 0
     else
         local vr="$(pwd)/deps/vcpkg"
@@ -394,7 +401,7 @@ check_vcpkg_prompt() {
                 exit 1
             fi
         fi
-        echo "export VCPKG_ROOT=\"$vr\"" >> "$STATE_FILE"
+        write_state VCPKG_ROOT "$vr"
     fi
 }
 
@@ -404,10 +411,10 @@ do_vcpkg_setup() {
         git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
         "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
     fi
-    echo "export VCPKG_FORCE_SYSTEM_BINARIES=1" >> "$STATE_FILE"
-    echo "export VCPKG_TOOLCHAIN=\"$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake\"" >> "$STATE_FILE"
-    echo "export VCPKG_TRIPLET=\"x64-linux-static\"" >> "$STATE_FILE"
-    echo "export OVERLAY_TRIPLETS=\"$(pwd)/triplets\"" >> "$STATE_FILE"
+    write_state VCPKG_FORCE_SYSTEM_BINARIES 1
+    write_state VCPKG_TOOLCHAIN "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+    write_state VCPKG_TRIPLET "x64-linux-static"
+    write_state OVERLAY_TRIPLETS "$(pwd)/triplets"
 }
 
 do_cppcheck() {
@@ -611,7 +618,7 @@ if [ "$BUILD_WINDOWS" -eq 1 ]; then
         done
     fi
 fi
-echo "export TEST_CMD=\"$TEST_CMD\"" >> "$STATE_FILE"
+write_state TEST_CMD "$TEST_CMD"
 draw_ui
 
 for i in "${!STAGES[@]}"; do

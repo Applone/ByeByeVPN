@@ -293,7 +293,7 @@ void interactive() {
         tee_printf("  %s[4]%s  TLS + SNI consistency — Reality discriminator\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[5]%s  J3 active probing     — active junk probes\n", col(C::CYN), col(C::RST));
         tee_printf("  %s[6]%s  GeoIP lookup          — country / ASN aggregation\n", col(C::CYN), col(C::RST));
-        tee_printf("  %s.at(0)%s  Exit\n\n", col(C::CYN), col(C::RST));
+        tee_printf("  %s[0]%s  Exit\n\n", col(C::CYN), col(C::RST));
 
         const string s = ask("  > ");
         if (s.empty()) continue;

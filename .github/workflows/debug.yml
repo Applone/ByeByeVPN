@@ -30,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake ninja-build clang lld llvm cppcheck clang-tidy \
+          apt-get install -y cmake ninja-build clang lld llvm cppcheck clang-tidy clang-tools \
             git curl zip unzip tar pkg-config
 
       - name: Setup vcpkg

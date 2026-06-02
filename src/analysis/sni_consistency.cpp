@@ -14,22 +14,39 @@
 
 namespace {
 
+// ASCII case-insensitive equality on string_views, with no heap allocation
+// (the previous implementation materialised two std::strings per comparison
+// just to reach _stricmp's const char* API).
+[[nodiscard]] constexpr bool iequals_ascii(std::string_view a, std::string_view b) noexcept {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i{0}; i < a.size(); ++i) {
+        const auto ca{static_cast<unsigned char>(a[i])};
+        const auto cb{static_cast<unsigned char>(b[i])};
+        const bool a_alpha{ca >= 'A' && ca <= 'Z'};
+        const bool b_alpha{cb >= 'A' && cb <= 'Z'};
+        const unsigned char fa{a_alpha ? static_cast<unsigned char>(ca | 0x20) : ca};
+        const unsigned char fb{b_alpha ? static_cast<unsigned char>(cb | 0x20) : cb};
+        if (fa != fb) return false;
+    }
+    return true;
+}
+
 // Check if name matches pattern (supports wildcards)
-[[nodiscard]] bool dns_name_match(std::string_view name, std::string_view pat) {
+[[nodiscard]] bool dns_name_match(std::string_view name, std::string_view pat) noexcept {
     if (name.empty() || pat.empty()) return false;
-    
+
     // Wildcard pattern
     if (pat.starts_with("*.")) {
         const std::string_view suffix{pat.substr(1)};
         if (name.size() <= suffix.size()) return false;
-        
+
         const std::size_t off{name.size() - suffix.size()};
         // Check suffix matches and only one label before wildcard
-        return _stricmp(std::string{name.substr(off)}.c_str(), std::string{suffix}.c_str()) == 0 &&
+        return iequals_ascii(name.substr(off), suffix) &&
                name.find('.') == off;
     }
-    
-    return _stricmp(std::string{name}.c_str(), std::string{pat}.c_str()) == 0;
+
+    return iequals_ascii(name, pat);
 }
 
 // Check if certificate covers the given name
@@ -122,7 +139,7 @@ inline constexpr std::array kAltSnis{
         
         if (!cert_covers_base) {
             for (const auto& s : kAltSnis) {
-                if (_stricmp(s, base_sni_str.c_str()) == 0) continue;
+                if (iequals_ascii(s, base_sni_str)) continue;
                 
                 if (cert_covers_name(s, base.subject_cn, base.san)) {
                     c.reality_like = true;

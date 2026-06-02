@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
@@ -106,10 +105,9 @@ namespace {
 }
 
 // Check if probe name is a valid HTTP probe
-[[nodiscard]] bool is_valid_http_probe(const char* name) noexcept {
-    if (!name) return false;
-    return std::strstr(name, "HTTP GET /") != nullptr ||
-           std::strstr(name, "HTTP abs-URI") != nullptr;
+[[nodiscard]] bool is_valid_http_probe(std::string_view name) noexcept {
+    return name.find("HTTP GET /") != std::string_view::npos ||
+           name.find("HTTP abs-URI") != std::string_view::npos;
 }
 
 } // namespace
@@ -253,14 +251,14 @@ namespace {
     struct KeyEntry {
         std::string line;
         int bytes;
-        const char* name;
+        std::string_view name;  // borrows p.name; probes is a stable const ref
     };
     std::vector<KeyEntry> keys;
-    
+
     for (const auto& p : probes) {
         if (p.responded) {
             ++a.resp;
-            keys.push_back({.line=p.first_line, .bytes=p.bytes, .name=p.name.c_str()});
+            keys.push_back({.line=p.first_line, .bytes=p.bytes, .name=p.name});
             
             bool bad_v{false};
             const bool is_http{looks_like_http_line(p.first_line, &bad_v)};

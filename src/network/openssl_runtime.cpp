@@ -12,8 +12,12 @@
 
 namespace {
 
-// Thread-safe initialization flag
-std::once_flag g_ossl_once;
+// Thread-safe initialization state. A plain mutex + flag is used instead of
+// std::call_once so the runtime can be torn down and rebuilt: once a
+// std::once_flag has fired it can never run again, which would make
+// openssl_runtime_init() a no-op after openssl_runtime_cleanup().
+std::mutex g_ossl_mutex;
+bool g_ossl_initialized{false};
 bool g_ossl_ok{false};
 std::string g_ossl_err;
 
@@ -78,8 +82,13 @@ void do_init() {
 } // namespace
 
 [[nodiscard]] bool openssl_runtime_init(std::string* err) {
-    std::call_once(g_ossl_once, do_init);
-    
+    std::lock_guard<std::mutex> lock(g_ossl_mutex);
+
+    if (!g_ossl_initialized) {
+        do_init();
+        g_ossl_initialized = true;
+    }
+
     if (!g_ossl_ok && err) {
         *err = g_ossl_err;
     }
@@ -87,6 +96,9 @@ void do_init() {
 }
 
 void openssl_runtime_cleanup() {
+    std::lock_guard<std::mutex> lock(g_ossl_mutex);
+    if (!g_ossl_initialized) return;
+
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
     if (g_provider_legacy) {
         OSSL_PROVIDER_unload(g_provider_legacy);
@@ -105,6 +117,11 @@ void openssl_runtime_cleanup() {
     CRYPTO_cleanup_all_ex_data();
     ERR_free_strings();
 #endif
+
+    // Allow a subsequent openssl_runtime_init() to rebuild the runtime.
+    g_ossl_initialized = false;
+    g_ossl_ok = false;
+    g_ossl_err.clear();
 }
 
 [[nodiscard]] bool ssl_attach_socket(SSL* ssl, SOCKET s, std::string* err) {
