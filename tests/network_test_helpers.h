@@ -235,6 +235,7 @@ public:
                 SOCKET client = accept(listen_sock_.get(), nullptr, nullptr);
                 if (client != INVALID_SOCKET) {
                     SocketGuard cg{client};          // RAII close after handler
+                    set_nonblocking(client, false);
                     handler_(client, handled);
                     ++handled;
                     handled_clients_.store(handled, std::memory_order_relaxed);

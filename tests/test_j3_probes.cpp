@@ -203,7 +203,7 @@ TEST_CASE("j3_probes loopback service returns named probe set") {
     TcpTimeoutGuard timeout_guard(400);
 
     testnet::TcpMultiShotServer server(
-        2,
+        8,
         [](SOCKET client, int index) {
             if (index == 0) {
                 const char first_probe[] = "srv\x01\n";
