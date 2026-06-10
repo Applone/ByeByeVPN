@@ -76,3 +76,11 @@ byebyevpn udp my.server.ru       # UDP WG/AWG probes only
 
 GPLv3. See [LICENSE](LICENSE) for the full license.
 This project is a fork of ByeByeVPN and contains code originally licensed under the MIT License by `pwnnex`. See [NOTICE](NOTICE) for the original copyright and permission notices.
+
+## Donations
+
+If you find this project useful, consider donating:
+
+- **TON network**: `UQB0t1EOgP2SZOfWK4HMZc_hda0lczGCJzH6-cvuv2ZuFhD7`
+- **TRC20 network**: `TYCRxNPqYv342hr4yDzYjm48ruAvL8joj4`
+- **BNB network**: `0x0E83d0d058B1A10F079D46fa70760068E305D6eB`
